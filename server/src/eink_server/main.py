@@ -39,6 +39,23 @@ OVERLAY_CLOCK = os.environ.get("EINK_OVERLAY_CLOCK", "false").strip().lower() in
     "1", "true", "yes", "on",
 )
 
+
+def _resolve_spec_path() -> Optional[Path]:
+    """Find the renderer spec on disk. Container puts it at /app/...; for
+    local dev we fall back to docs/renderer-spec.md relative to this file."""
+    env = os.environ.get("EINK_RENDERER_SPEC_PATH")
+    candidates = [Path(env)] if env else []
+    candidates.append(Path("/app/renderer-spec.md"))
+    here = Path(__file__).resolve().parent
+    candidates.append(here.parent.parent.parent / "docs" / "renderer-spec.md")
+    for p in candidates:
+        if p.is_file():
+            return p
+    return None
+
+
+SPEC_PATH = _resolve_spec_path()
+
 if not PUSH_TOKEN or not READ_TOKEN:
     raise RuntimeError(
         "EINK_PUSH_TOKEN and EINK_READ_TOKEN must be set (use long random strings)"
@@ -61,6 +78,19 @@ def _check_token(authorization: Optional[str], expected: str) -> None:
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/renderer-spec.md")
+def renderer_spec() -> Response:
+    """Public, unauthenticated copy of the renderer contract — so an LLM
+    agent that only knows the service URL can fetch its operating manual."""
+    if SPEC_PATH is None:
+        raise HTTPException(status_code=404, detail="renderer spec not bundled")
+    return Response(
+        content=SPEC_PATH.read_bytes(),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @app.post("/image")

@@ -9,6 +9,10 @@ should not need any other file in this repo.
 > Service base URL: provided by the operator (e.g.
 > `https://eink.ein-service.de`).
 > Push token: provided by the operator out of band. Treat as password.
+>
+> **This file is also served live at `<base-url>/renderer-spec.md`** — no
+> auth required. If you're an LLM agent and you only have the base URL,
+> fetch that path to get the latest contract.
 
 ---
 

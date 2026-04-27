@@ -10,8 +10,9 @@ ENV PATH="/opt/venv/bin:$PATH"
 RUN pip install --no-cache-dir -U pip pdm==2.26.8
 
 WORKDIR /build
-COPY pyproject.toml pdm.lock ./
-COPY src ./src
+COPY server/pyproject.toml server/pdm.lock ./
+COPY server/src ./src
+COPY docs/renderer-spec.md ./renderer-spec.md
 
 # Resolve deps from lockfile, install via pip into /opt/venv, then install
 # the project itself without re-resolving deps.
@@ -32,6 +33,8 @@ RUN useradd --system --uid 10001 --create-home --home-dir /home/eink eink \
  && chown -R eink:eink /data
 
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=builder /build/renderer-spec.md /app/renderer-spec.md
+ENV EINK_RENDERER_SPEC_PATH=/app/renderer-spec.md
 
 USER eink
 WORKDIR /home/eink

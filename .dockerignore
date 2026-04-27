@@ -1,0 +1,30 @@
+# Repo-root context — only need server/ + docs/renderer-spec.md.
+# Default-deny by including everything we DON'T want in the image.
+**/.git
+**/.github
+**/.claude
+**/.venv
+**/__pypackages__
+**/.pdm-python
+**/.pdm-build
+**/dist
+**/build
+**/__pycache__
+**/*.pyc
+**/.DS_Store
+**/.idea
+
+# Server-local
+server/data-local/
+server/.env
+server/.env.*
+server/uv.lock
+
+# Firmware + deploy artifacts aren't needed in the server image
+firmware/
+deploy/
+diary/
+
+# Top-level docs except the one we ship
+docs/*.md
+!docs/renderer-spec.md
