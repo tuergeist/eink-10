@@ -1,0 +1,28 @@
+[project]
+name = "eink-server"
+version = "0.1.0"
+description = "Config + image server for the Inkplate 10 dashboard"
+authors = [
+    { name = "Christoph Becker", email = "christoph.becker@vsx.net" },
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pillow>=11.0",
+]
+
+[project.scripts]
+eink-server = "eink_server.main:run"
+eink-push = "eink_server.push_cli:main"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.scripts]
+serve = {cmd = "uvicorn eink_server.main:app --host 0.0.0.0 --port 8989", env_file = ".env.local"}
+push = {call = "eink_server.push_cli:main"}

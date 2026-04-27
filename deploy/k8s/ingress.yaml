@@ -1,0 +1,28 @@
+# Ingress is the TLS termination point. Reverse proxy (nginx, Traefik, …)
+# does HTTPS, the pod stays plain HTTP. Adjust ingressClassName + the
+# cert-manager / TLS secret to match your cluster.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: eink-server
+  namespace: eink
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # Limit POST /image to ~8 MB; keep GETs unrestricted.
+    nginx.ingress.kubernetes.io/proxy-body-size: "8m"
+spec:
+  ingressClassName: nginx       # or traefik / haproxy / your class
+  tls:
+    - hosts: ["eink.example.com"]
+      secretName: eink-tls
+  rules:
+    - host: eink.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: eink-server
+                port:
+                  number: 80

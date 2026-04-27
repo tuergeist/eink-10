@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: eink-server
+  namespace: eink
+  labels:
+    app: eink-server
+spec:
+  replicas: 1                  # ReadWriteOnce PVC + single source of truth → keep at 1
+  strategy:
+    type: Recreate             # avoid two pods racing on the same volume
+  selector:
+    matchLabels:
+      app: eink-server
+  template:
+    metadata:
+      labels:
+        app: eink-server
+    spec:
+      securityContext:
+        fsGroup: 10001
+        runAsNonRoot: true
+      containers:
+        - name: server
+          image: ghcr.io/tuergeist/eink-10:latest    # adjust to your registry
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8989
+          env:
+            - name: EINK_PUSH_TOKEN
+              valueFrom:
+                secretKeyRef: { name: eink-tokens, key: push-token }
+            - name: EINK_READ_TOKEN
+              valueFrom:
+                secretKeyRef: { name: eink-tokens, key: read-token }
+            - name: EINK_PUBLIC_BASE_URL
+              value: "https://eink.example.com"   # adjust to your Ingress hostname
+            - name: EINK_REFRESH_INTERVAL_S
+              value: "300"
+            - name: EINK_DATA_DIR
+              value: "/data"
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          resources:
+            requests: { cpu: "20m",  memory: "64Mi" }
+            limits:   { cpu: "500m", memory: "256Mi" }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: eink-data

@@ -1,0 +1,34 @@
+# Python / PDM
+server/.venv/
+server/__pypackages__/
+server/.pdm-python
+server/.pdm-build/
+server/dist/
+server/build/
+server/.env.local
+server/data-local/
+**/__pycache__/
+**/*.pyc
+
+# PlatformIO
+firmware/.pio/
+firmware/.pioenvs/
+firmware/.piolibdeps/
+firmware/.vscode/
+firmware/.clangd
+
+# Secrets — Wi-Fi credentials live here, never commit
+firmware/include/secrets.h
+
+# Editors / OS
+.DS_Store
+.idea/
+*.swp
+.claude/
+
+# uv leaks an auxiliary lockfile when PDM uses uv as resolver — pdm.lock
+# is authoritative
+server/uv.lock
+
+# k8s — real secret stays out of git; only the example template is tracked
+deploy/k8s/secret.yaml

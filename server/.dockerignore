@@ -1,0 +1,13 @@
+.venv/
+__pypackages__/
+.pdm-python
+.pdm-build/
+dist/
+build/
+data-local/
+.env.local
+.env*.local
+**/__pycache__/
+**/*.pyc
+.DS_Store
+diary/
