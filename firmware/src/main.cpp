@@ -28,6 +28,14 @@ static constexpr uint32_t NTP_TIMEOUT_MS = 5000;
 // Europe/Berlin POSIX TZ. CEST/CET DST rules; works without tzdata files.
 static constexpr const char *TZ_RULE = "CET-1CEST,M3.5.0,M10.5.0/3";
 
+// Battery thresholds (Li-Po single cell). Below BATT_USB_ONLY we assume
+// there's no battery installed — the board runs from USB and we don't show
+// a low-battery indicator. Below BATT_LOW (3.4 V) we extend the sleep cycle
+// to stretch the remaining capacity.
+static constexpr float BATT_USB_ONLY = 2.5f;
+static constexpr float BATT_LOW = 3.4f;
+static constexpr uint32_t LOW_BAT_REFRESH_MULT = 6;
+
 Inkplate display(INKPLATE_3BIT);
 Preferences prefs;
 
@@ -57,8 +65,24 @@ static bool httpBegin(HTTPClient &http, const String &url) {
 static void deepSleep(uint64_t seconds) {
     Serial.printf("[sleep] %llus\n", (unsigned long long)seconds);
     Serial.flush();
+    // Cut power to the EPD rails + idle the SD card so nothing keeps drawing
+    // while the ESP32 sleeps. display.display() turns off the panel by
+    // default, but einkOff() is idempotent and explicit.
+    display.einkOff();
+    display.sdCardSleep();
     esp_sleep_enable_timer_wakeup(seconds * 1000000ULL);
     esp_deep_sleep_start();
+}
+
+// Returns 0.0 when no battery is detected (USB-only). Otherwise the cell
+// voltage. The MCP23017 + voltage divider need a couple of ms to settle
+// after wake; the Inkplate library handles that internally.
+static float batteryVolts() {
+    return display.readBattery();
+}
+
+static bool batteryLow(float v) {
+    return v >= BATT_USB_ONLY && v < BATT_LOW;
 }
 
 static bool connectWifi() {
@@ -98,6 +122,34 @@ static bool fetchString(const String &url, String &out) {
     out = http.getString();
     http.end();
     return true;
+}
+
+// Top-right "LOW BAT 3.32V" indicator drawn into the framebuffer. Only
+// rendered when we're already redrawing the display for a new image — we
+// don't trigger a refresh just to show this.
+static void drawLowBatteryOverlay(float volts) {
+    char buf[24];
+    snprintf(buf, sizeof(buf), "LOW BAT %.2fV", volts);
+
+    display.setTextSize(2);
+    display.setTextWrap(false);
+    int16_t x1, y1;
+    uint16_t tw, th;
+    display.getTextBounds(buf, 0, 0, &x1, &y1, &tw, &th);
+
+    constexpr int padding = 6;
+    constexpr int margin = 12;
+    int boxW = tw + padding * 2;
+    int boxH = th + padding * 2;
+    int boxX = display.width() - boxW - margin;
+    int boxY = margin;
+
+    display.fillRect(boxX, boxY, boxW, boxH, 7);
+    display.drawRect(boxX, boxY, boxW, boxH, 0);
+    display.setTextColor(0, 7);
+    display.setCursor(boxX + padding - x1, boxY + padding - y1);
+    display.print(buf);
+    Serial.printf("[batt] overlay '%s'\n", buf);
 }
 
 // Pull NTP time, return true if we got a plausible epoch.
@@ -191,6 +243,14 @@ void setup() {
     display.begin();
     prefs.begin("eink", false);
 
+    float battV = batteryVolts();
+    bool lowBat = batteryLow(battV);
+    if (battV < BATT_USB_ONLY) {
+        Serial.println("[batt] no battery / USB-only");
+    } else {
+        Serial.printf("[batt] %.2fV%s\n", battV, lowBat ? " (LOW)" : "");
+    }
+
     if (!connectWifi()) {
         deepSleep(RETRY_SLEEP_S);
     }
@@ -238,6 +298,9 @@ void setup() {
             if (overlayClock) {
                 drawClockOverlay();
             }
+            if (lowBat) {
+                drawLowBatteryOverlay(battV);
+            }
             display.display();
             prefs.putString("last_modified", lastMod);
             Serial.println("[img] displayed");
@@ -246,6 +309,10 @@ void setup() {
         }
     }
 
+    if (lowBat) {
+        refreshS *= LOW_BAT_REFRESH_MULT;
+        Serial.printf("[batt] low → stretched sleep to %us\n", refreshS);
+    }
     deepSleep(refreshS);
 }
 
