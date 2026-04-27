@@ -35,6 +35,9 @@ CONFIG_URL_OVERRIDE: Optional[str] = (
     os.environ.get("EINK_CONFIG_URL_OVERRIDE") or None
 )
 MAX_UPLOAD_BYTES = int(os.environ.get("EINK_MAX_UPLOAD_BYTES", str(8 * 1024 * 1024)))
+OVERLAY_CLOCK = os.environ.get("EINK_OVERLAY_CLOCK", "false").strip().lower() in (
+    "1", "true", "yes", "on",
+)
 
 if not PUSH_TOKEN or not READ_TOKEN:
     raise RuntimeError(
@@ -107,6 +110,7 @@ def config(authorization: Optional[str] = Header(None)) -> JSONResponse:
             "last_modified": meta.last_modified if meta else "",
             "refresh_interval_seconds": REFRESH_INTERVAL_S,
             "config_url_override": CONFIG_URL_OVERRIDE,
+            "overlay_clock": OVERLAY_CLOCK,
         }
     )
 

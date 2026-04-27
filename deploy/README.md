@@ -41,6 +41,13 @@ curl -X POST https://eink.example.com/image?dither=floyd-steinberg \
 curl -H "Authorization: Bearer $READ_TOKEN" https://eink.example.com/config.json
 ```
 
+## For renderers
+
+If you (or an LLM agent) want to build a renderer that pushes images,
+the contract is in [`docs/renderer-spec.md`](../docs/renderer-spec.md).
+Hand that file to whatever's writing the renderer; everything they need
+is in there.
+
 ## Why single-replica + Recreate
 
 The PVC is `ReadWriteOnce`, and there's only ever one canonical image. Two

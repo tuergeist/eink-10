@@ -38,6 +38,8 @@ spec:
               value: "https://eink.example.com"   # adjust to your Ingress hostname
             - name: EINK_REFRESH_INTERVAL_S
               value: "300"
+            - name: EINK_OVERLAY_CLOCK
+              value: "false"             # set to "true" to have the board render a timestamp on each new image
             - name: EINK_DATA_DIR
               value: "/data"
           volumeMounts:

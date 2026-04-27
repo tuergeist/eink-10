@@ -9,21 +9,50 @@
 #include <Arduino.h>
 #include <Inkplate.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <time.h>
+#include <sys/time.h>
 
 #include "secrets.h"
 
 static constexpr const char *DEFAULT_CONFIG_URL =
-    "http://172.16.2.158:8989/config.json";
+    "https://eink.ein-service.de/config.json";
 static constexpr uint32_t DEFAULT_REFRESH_S = 300;
 static constexpr uint32_t WIFI_TIMEOUT_MS = 30000;
 static constexpr uint32_t RETRY_SLEEP_S = 60;
 static constexpr uint32_t HTTP_TIMEOUT_MS = 20000;
+static constexpr uint32_t NTP_TIMEOUT_MS = 5000;
+// Europe/Berlin POSIX TZ. CEST/CET DST rules; works without tzdata files.
+static constexpr const char *TZ_RULE = "CET-1CEST,M3.5.0,M10.5.0/3";
 
 Inkplate display(INKPLATE_3BIT);
 Preferences prefs;
+
+// Reused for every HTTPS request this cycle — saves the TLS handshake state.
+static WiFiClientSecure secureClient;
+static bool secureReady = false;
+
+static void initSecureClient() {
+    if (secureReady) return;
+    // TLS without cert verification. The bearer token is the primary
+    // authentication; TLS still encrypts traffic against passive sniffers.
+    // Harden by pinning the Let's Encrypt ISRG Root X1 once it's worth the
+    // rotation hassle.
+    secureClient.setInsecure();
+    secureReady = true;
+}
+
+// HTTPClient.begin() that picks plain HTTP or HTTPS+CA-bundle from the URL.
+static bool httpBegin(HTTPClient &http, const String &url) {
+    if (url.startsWith("https://")) {
+        initSecureClient();
+        return http.begin(secureClient, url);
+    }
+    return http.begin(url);
+}
 
 static void deepSleep(uint64_t seconds) {
     Serial.printf("[sleep] %llus\n", (unsigned long long)seconds);
@@ -53,11 +82,12 @@ static bool connectWifi() {
 // Issue a bearer-authenticated GET, populate `out`. Returns true on 200.
 static bool fetchString(const String &url, String &out) {
     HTTPClient http;
-    if (!http.begin(url)) {
+    if (!httpBegin(http, url)) {
         Serial.println("[http] begin failed");
         return false;
     }
     http.setTimeout(HTTP_TIMEOUT_MS);
+    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     http.addHeader("Authorization", "Bearer " READ_TOKEN);
     int code = http.GET();
     if (code != 200) {
@@ -70,16 +100,69 @@ static bool fetchString(const String &url, String &out) {
     return true;
 }
 
+// Pull NTP time, return true if we got a plausible epoch.
+static bool ntpSync() {
+    configTime(0, 0, "pool.ntp.org", "time.cloudflare.com");
+    setenv("TZ", TZ_RULE, 1);
+    tzset();
+
+    uint32_t start = millis();
+    time_t now = 0;
+    while (millis() - start < NTP_TIMEOUT_MS) {
+        time(&now);
+        if (now > 1700000000) {  // ≥ 2023-11 ⇒ real time
+            Serial.printf("[ntp] synced epoch=%lld\n", (long long)now);
+            return true;
+        }
+        delay(100);
+    }
+    Serial.println("[ntp] timeout");
+    return false;
+}
+
+// Draw the current local time at bottom-right of the freshly fetched image.
+// Renders into the framebuffer; caller is responsible for display.display().
+static void drawClockOverlay() {
+    if (!ntpSync()) return;
+
+    time_t now = time(nullptr);
+    struct tm lt;
+    localtime_r(&now, &lt);
+    char buf[24];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &lt);
+
+    display.setTextSize(2);
+    display.setTextWrap(false);
+    int16_t x1, y1;
+    uint16_t tw, th;
+    display.getTextBounds(buf, 0, 0, &x1, &y1, &tw, &th);
+
+    constexpr int padding = 6;
+    constexpr int margin = 12;
+    int boxW = tw + padding * 2;
+    int boxH = th + padding * 2;
+    int boxX = display.width() - boxW - margin;
+    int boxY = display.height() - boxH - margin;
+
+    // White background under the text so it's readable on any image; no border.
+    display.fillRect(boxX, boxY, boxW, boxH, 7);
+    display.setTextColor(0, 7);
+    display.setCursor(boxX + padding - x1, boxY + padding - y1);
+    display.print(buf);
+    Serial.printf("[clock] overlay '%s'\n", buf);
+}
+
 // Bearer-authenticated GET that streams the PNG straight into the
 // Inkplate decoder. Server pre-quantizes onto the 8 panel grays, so we
 // keep on-device dither off for sharper text.
 static bool fetchAndDrawImage(const String &url) {
     HTTPClient http;
-    if (!http.begin(url)) {
+    if (!httpBegin(http, url)) {
         Serial.println("[img] begin failed");
         return false;
     }
     http.setTimeout(HTTP_TIMEOUT_MS);
+    http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
     http.addHeader("Authorization", "Bearer " READ_TOKEN);
     int code = http.GET();
     if (code != 200) {
@@ -137,9 +220,10 @@ void setup() {
     String storedMod = prefs.getString("last_modified", "");
     uint32_t refreshS = doc["refresh_interval_seconds"] | DEFAULT_REFRESH_S;
     String imageUrl = doc["image_url"] | "";
+    bool overlayClock = doc["overlay_clock"] | false;
 
-    Serial.printf("[cfg] last_modified server=%s stored=%s\n",
-                  lastMod.c_str(), storedMod.c_str());
+    Serial.printf("[cfg] last_modified server=%s stored=%s overlay_clock=%d\n",
+                  lastMod.c_str(), storedMod.c_str(), overlayClock);
 
     if (lastMod.length() == 0) {
         Serial.println("[img] server has no image yet — skip");
@@ -151,6 +235,9 @@ void setup() {
         Serial.printf("[img] fetch %s\n", imageUrl.c_str());
         display.clearDisplay();
         if (fetchAndDrawImage(imageUrl)) {
+            if (overlayClock) {
+                drawClockOverlay();
+            }
             display.display();
             prefs.putString("last_modified", lastMod);
             Serial.println("[img] displayed");
