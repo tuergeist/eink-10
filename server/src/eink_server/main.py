@@ -1,23 +1,34 @@
-"""FastAPI app: bearer-auth-protected dashboard image cache.
+"""FastAPI app: bearer-auth-protected dashboard image cache, channel-aware.
 
-Two roles:
-  * Pusher (PUSH_TOKEN): POST /image with PNG bytes, optionally with
-    ?dither=floyd-steinberg to quantize onto the Inkplate's 8 gray levels.
-  * Reader (READ_TOKEN): GET /config.json and GET /dashboard.png — used by
-    the Inkplate firmware.
+A *channel* is a named slot for one stored PNG (e.g. ``inkplate10``,
+``inkplate6``, ``kueche``). Each board has its own channel; the renderer
+addresses one channel per push. This lets a single service feed multiple
+displays without touching the schema between them.
 
-State lives on disk (DATA_DIR), surviving pod restarts. TLS is expected to
-be terminated by a reverse proxy / Ingress in front of us.
+Endpoints all live under ``/c/{channel}/`` plus a small set of
+unauthenticated globals:
+
+  * ``GET  /healthz``                  no auth, liveness probe
+  * ``GET  /renderer-spec.md``         no auth, returns the contract doc
+
+  * ``POST   /c/{channel}/image``      push token; ``?dither=`` optional
+  * ``DELETE /c/{channel}/image``      push token; clears stored bytes
+  * ``GET    /c/{channel}/config.json``read token; what the board polls
+  * ``GET    /c/{channel}/dashboard.png`` read token; the bytes themselves
+
+State lives on disk under ``DATA_DIR/<channel>/``. Channel names are
+validated; arbitrary user-supplied strings can't escape into the FS.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import secrets
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Path as PathParam, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from .quantize import floyd_steinberg
@@ -38,6 +49,19 @@ MAX_UPLOAD_BYTES = int(os.environ.get("EINK_MAX_UPLOAD_BYTES", str(8 * 1024 * 10
 OVERLAY_CLOCK = os.environ.get("EINK_OVERLAY_CLOCK", "false").strip().lower() in (
     "1", "true", "yes", "on",
 )
+
+# Known panels — used to surface dimensions in /config.json so renderers
+# can adapt without out-of-band knowledge. Unknown channels work fine,
+# they just don't get a `panel` block in their config.
+PANEL_SPECS: dict[str, dict[str, int]] = {
+    "inkplate10": {"width": 1200, "height": 825, "gray_levels": 8},
+    "ink6":       {"width": 800,  "height": 600, "gray_levels": 8},
+}
+
+# Channel name format: lowercase letters, digits, dash, underscore.
+# Must start with alphanumeric. 1–32 chars. Excludes anything that could
+# escape the data dir or confuse downstream tooling.
+CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
 def _resolve_spec_path() -> Optional[Path]:
@@ -61,7 +85,24 @@ if not PUSH_TOKEN or not READ_TOKEN:
         "EINK_PUSH_TOKEN and EINK_READ_TOKEN must be set (use long random strings)"
     )
 
-storage = Storage(DATA_DIR)
+# Per-channel Storage instances are created lazily and cached.
+_storage_cache: dict[str, Storage] = {}
+
+
+def _storage_for(channel: str) -> Storage:
+    if channel not in _storage_cache:
+        _storage_cache[channel] = Storage(DATA_DIR / channel)
+    return _storage_cache[channel]
+
+
+def _validated_channel(channel: str) -> str:
+    if not CHANNEL_RE.match(channel):
+        # Use 404 rather than 400 so we don't help an attacker
+        # distinguish "exists but invalid name" vs "no such channel".
+        raise HTTPException(status_code=404, detail="channel not found")
+    return channel
+
+
 app = FastAPI(title="Inkplate Dashboard Cache")
 
 
@@ -74,7 +115,7 @@ def _check_token(authorization: Optional[str], expected: str) -> None:
         raise HTTPException(status_code=403, detail="invalid token")
 
 
-# --- endpoints ----------------------------------------------------------------
+# --- public endpoints ---------------------------------------------------------
 @app.get("/healthz")
 def healthz() -> dict[str, str]:
     return {"status": "ok"}
@@ -93,13 +134,16 @@ def renderer_spec() -> Response:
     )
 
 
-@app.post("/image")
+# --- per-channel endpoints ----------------------------------------------------
+@app.post("/c/{channel}/image")
 async def push_image(
     request: Request,
+    channel: str = PathParam(...),
     authorization: Optional[str] = Header(None),
     dither: str = Query("none", pattern="^(none|floyd-steinberg)$"),
 ) -> JSONResponse:
     _check_token(authorization, PUSH_TOKEN)
+    channel = _validated_channel(channel)
 
     body = await request.body()
     if not body:
@@ -116,38 +160,55 @@ async def push_image(
     png_bytes = floyd_steinberg(body) if dither == "floyd-steinberg" else body
 
     try:
-        meta = storage.store(png_bytes, dither=dither)
+        meta = _storage_for(channel).store(png_bytes, dither=dither)
     except Exception as e:  # bad PNG, IO, etc.
         raise HTTPException(status_code=400, detail=f"store failed: {e}") from e
 
-    return JSONResponse(meta.as_dict(), status_code=200)
+    payload = meta.as_dict()
+    payload["channel"] = channel
+    return JSONResponse(payload, status_code=200)
 
 
-@app.delete("/image", status_code=204)
-def delete_image(authorization: Optional[str] = Header(None)) -> Response:
+@app.delete("/c/{channel}/image", status_code=204)
+def delete_image(
+    channel: str = PathParam(...),
+    authorization: Optional[str] = Header(None),
+) -> Response:
     _check_token(authorization, PUSH_TOKEN)
-    storage.delete()
+    channel = _validated_channel(channel)
+    _storage_for(channel).delete()
     return Response(status_code=204)
 
 
-@app.get("/config.json")
-def config(authorization: Optional[str] = Header(None)) -> JSONResponse:
+@app.get("/c/{channel}/config.json")
+def config(
+    channel: str = PathParam(...),
+    authorization: Optional[str] = Header(None),
+) -> JSONResponse:
     _check_token(authorization, READ_TOKEN)
-    meta = storage.load_meta()
-    return JSONResponse(
-        {
-            "image_url": f"{PUBLIC_BASE_URL}/dashboard.png",
-            "last_modified": meta.last_modified if meta else "",
-            "refresh_interval_seconds": REFRESH_INTERVAL_S,
-            "config_url_override": CONFIG_URL_OVERRIDE,
-            "overlay_clock": OVERLAY_CLOCK,
-        }
-    )
+    channel = _validated_channel(channel)
+    meta = _storage_for(channel).load_meta()
+    body: dict[str, object] = {
+        "channel": channel,
+        "image_url": f"{PUBLIC_BASE_URL}/c/{channel}/dashboard.png",
+        "last_modified": meta.last_modified if meta else "",
+        "refresh_interval_seconds": REFRESH_INTERVAL_S,
+        "config_url_override": CONFIG_URL_OVERRIDE,
+        "overlay_clock": OVERLAY_CLOCK,
+    }
+    if channel in PANEL_SPECS:
+        body["panel"] = PANEL_SPECS[channel]
+    return JSONResponse(body)
 
 
-@app.get("/dashboard.png")
-def dashboard(authorization: Optional[str] = Header(None)) -> Response:
+@app.get("/c/{channel}/dashboard.png")
+def dashboard(
+    channel: str = PathParam(...),
+    authorization: Optional[str] = Header(None),
+) -> Response:
     _check_token(authorization, READ_TOKEN)
+    channel = _validated_channel(channel)
+    storage = _storage_for(channel)
     data = storage.load_image()
     if data is None:
         raise HTTPException(status_code=404, detail="no image pushed yet")

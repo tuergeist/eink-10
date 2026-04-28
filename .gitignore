@@ -32,3 +32,7 @@ server/uv.lock
 
 # k8s — real secret stays out of git; only the example template is tracked
 deploy/k8s/secret.yaml
+
+# Flash dumps + recovered user filesystem from devices we re-flashed.
+# Stays out of git because they typically contain Wi-Fi creds, API keys, etc.
+backups/

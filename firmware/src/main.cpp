@@ -18,8 +18,14 @@
 
 #include "secrets.h"
 
+// EINK_CHANNEL is set per platformio.ini env (e.g. "inkplate10", "inkplate6").
+// Falls back to "inkplate10" if someone builds without the define.
+#ifndef EINK_CHANNEL
+#define EINK_CHANNEL "inkplate10"
+#endif
+
 static constexpr const char *DEFAULT_CONFIG_URL =
-    "https://eink.ein-service.de/config.json";
+    "https://eink.ein-service.de/c/" EINK_CHANNEL "/config.json";
 static constexpr uint32_t DEFAULT_REFRESH_S = 300;
 static constexpr uint32_t WIFI_TIMEOUT_MS = 30000;
 static constexpr uint32_t RETRY_SLEEP_S = 60;

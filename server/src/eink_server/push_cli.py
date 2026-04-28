@@ -27,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
         help="defaults to $EINK_PUSH_TOKEN",
     )
     parser.add_argument(
+        "--channel",
+        default=os.environ.get("EINK_CHANNEL", "inkplate10"),
+        help="target channel (defaults to $EINK_CHANNEL or 'inkplate10')",
+    )
+    parser.add_argument(
         "--dither",
         action="store_true",
         help="apply server-side Floyd-Steinberg quantization to 8 grays",
@@ -40,7 +45,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {args.image} not found", file=sys.stderr)
         return 2
 
-    url = args.server.rstrip("/") + "/image"
+    url = f"{args.server.rstrip('/')}/c/{args.channel}/image"
     if args.dither:
         url += "?dither=floyd-steinberg"
 

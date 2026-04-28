@@ -1,8 +1,9 @@
-# eink-10 Renderer Specification
+# eink Renderer Specification
 
 A **renderer** is anything that produces a dashboard PNG and pushes it
-to this service. The Inkplate 10 board polls the service and displays
-whatever is currently stored. This document is the full contract between
+to this service. One or more Inkplate boards poll the service for their
+own slot — called a **channel** — and display whatever is currently
+stored for that channel. This document is the full contract between
 renderers and the service. If you are an LLM building a renderer, you
 should not need any other file in this repo.
 
@@ -18,9 +19,13 @@ should not need any other file in this repo.
 
 ## TL;DR
 
-- Render a **1200×825 grayscale PNG**.
-- `POST /image` with header `Authorization: Bearer <PUSH_TOKEN>` and body =
-  raw PNG bytes (`Content-Type: image/png`).
+- Pick (or learn from the operator) the **channel** you target — e.g.
+  `inkplate10`, `ink6`.
+- `GET /c/<channel>/config.json` (with the read token) tells you your
+  panel's exact dimensions in the `panel` block.
+- Render a grayscale PNG at exactly those dimensions.
+- `POST /c/<channel>/image` with header `Authorization: Bearer <PUSH_TOKEN>`
+  and body = raw PNG bytes (`Content-Type: image/png`).
 - Optionally append `?dither=floyd-steinberg` to have the server quantize
   onto the panel's 8 grays. Otherwise send already-quantized pixels
   yourself.
@@ -30,19 +35,45 @@ should not need any other file in this repo.
 
 ---
 
+## Channels
+
+A channel is a named slot, holding exactly one current image. Each
+Inkplate board is configured with one channel and only fetches from that
+channel; you can run many boards off one service without them stepping
+on each other.
+
+Channel names match `^[a-z0-9][a-z0-9_-]{0,31}$`: lowercase letters,
+digits, dash, underscore. Anything else returns 404.
+
+### Known panels
+
+The service knows the dimensions of these channels and surfaces them in
+`config.json`:
+
+| Channel | Panel | Dimensions | Gray levels |
+|---|---|---|---|
+| `inkplate10` | Inkplate 10 (9.7") | 1200 × 825 | 8 |
+| `ink6`       | Inkplate 6 (6")    | 800 × 600  | 8 |
+
+Other channel names work too (the service stores whatever you push), they
+just don't get a `panel` block in `config.json` — the renderer is
+expected to know the target dimensions out of band.
+
+---
+
 ## Image format
 
 | Property | Required value |
 |---|---|
-| Width × height | **1200 × 825 px** exactly (smaller renders at top-left, larger gets clipped) |
+| Width × height | **exactly the panel's dimensions** (see channel's `panel.width` / `panel.height`) — smaller renders at top-left, larger gets clipped |
 | Color mode | 8-bit grayscale (PIL `"L"`, PNG color type 0) — RGB is accepted but converted |
 | Bit depth | 8 bits per channel |
 | Interlacing | **non-interlaced** (Adam7 PNG is not supported) |
 | File size | ≤ 8 MB per push |
 | Animation | not supported (only first frame is read) |
 
-The Inkplate 10 panel is **3-bit grayscale, 8 levels**. The exact gray
-values are evenly spaced across 0–255:
+The Inkplate 6 / 10 panels are **3-bit grayscale, 8 levels**. The exact
+gray values are evenly spaced across 0–255:
 
 ```
 0, 36, 73, 109, 146, 182, 219, 255
@@ -68,10 +99,15 @@ options:
 
 No auth. Returns `{"status":"ok"}`. Use for liveness checks.
 
-### `POST /image`
+### `GET /renderer-spec.md`
 
-Replace the current dashboard. Atomic — readers always see either the
-old or the new image, never a partial one.
+No auth. Returns this document. Use it to bootstrap LLM-driven
+renderers from just the base URL.
+
+### `POST /c/{channel}/image`
+
+Replace the current dashboard for one channel. Atomic — readers always
+see either the old or the new image, never a partial one.
 
 **Headers**
 
@@ -94,13 +130,14 @@ Raw PNG bytes. **Not** multipart, **not** base64.
 
 ```json
 {
+  "channel": "inkplate6",
   "last_modified": "467689173f81497e",
   "size": 5316,
-  "width": 1200,
-  "height": 825,
+  "width": 800,
+  "height": 600,
   "content_type": "image/png",
   "dither": "floyd-steinberg",
-  "pushed_at": "2026-04-27T12:36:51.967069Z"
+  "pushed_at": "2026-04-28T13:00:37.881306Z"
 }
 ```
 
@@ -115,32 +152,36 @@ display only when it differs.
 | `400` | empty body or invalid PNG |
 | `401` | missing or malformed `Authorization` header |
 | `403` | wrong token |
+| `404` | invalid channel name (regex violation) |
 | `413` | body > 8 MB |
 | `415` | `Content-Type` is set and isn't `image/png` |
 
-### `DELETE /image`
+### `DELETE /c/{channel}/image`
 
-Same auth as POST. Clears the stored image; subsequent `GET /dashboard.png`
-will 404 and the board will skip its refresh on next wake. Useful for
-testing — does **not** trigger a panel refresh by itself.
+Same auth as POST. Clears the stored image for one channel; subsequent
+`GET .../dashboard.png` returns 404 and the affected board skips its
+refresh on the next wake. Useful for testing — does **not** trigger a
+panel refresh by itself.
 
 ### Endpoints you should not call from a renderer
 
-- `GET /config.json` — read by the Inkplate, requires the read token.
-- `GET /dashboard.png` — same.
+These exist for the Inkplate firmware and require the read token:
 
-If you find yourself wanting either, you're probably writing the wrong
-side of this contract.
+- `GET /c/{channel}/config.json`
+- `GET /c/{channel}/dashboard.png`
+
+You can hit `config.json` once at renderer startup to discover panel
+dimensions; that's fine. Don't poll it.
 
 ---
 
 ## Push semantics & cadence
 
-- The service stores **one** current image. Each successful POST
-  replaces it.
-- The board polls `/config.json` every `refresh_interval_seconds`
+- Each channel stores **one** current image. Each successful POST
+  replaces it for that channel only.
+- Each board polls its own `config.json` every `refresh_interval_seconds`
   (default 300, set by the operator). The display only refreshes when
-  the image's content hash changed since the previous wake.
+  that channel's content hash changed since the previous wake.
 - Pushing **identical bytes** produces an identical hash → no display
   refresh. Free.
 - Pushing **bytes that differ in even one pixel** produces a new hash →
@@ -168,7 +209,15 @@ import os
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-WIDTH, HEIGHT = 1200, 825
+BASE = os.environ["EINK_BASE_URL"]            # e.g. https://eink.ein-service.de
+TOKEN = os.environ["EINK_PUSH_TOKEN"]
+CHANNEL = os.environ.get("EINK_CHANNEL", "inkplate10")
+
+# Discover dimensions for our channel.
+# Note: this requires the read token — the renderer typically already
+# knows the target panel and can hardcode WIDTH/HEIGHT instead.
+WIDTH, HEIGHT = 1200, 825   # inkplate10
+# WIDTH, HEIGHT = 800, 600  # ink6
 
 img = Image.new("L", (WIDTH, HEIGHT), 255)
 draw = ImageDraw.Draw(img)
@@ -179,11 +228,11 @@ buf = io.BytesIO()
 img.save(buf, format="PNG", optimize=True)
 
 resp = requests.post(
-    f"{os.environ['EINK_BASE_URL']}/image",
+    f"{BASE}/c/{CHANNEL}/image",
     params={"dither": "floyd-steinberg"},
     data=buf.getvalue(),
     headers={
-        "Authorization": f"Bearer {os.environ['EINK_PUSH_TOKEN']}",
+        "Authorization": f"Bearer {TOKEN}",
         "Content-Type": "image/png",
     },
     timeout=30,
@@ -195,7 +244,7 @@ print(resp.json())
 ### curl
 
 ```bash
-curl -X POST "$EINK_BASE_URL/image?dither=floyd-steinberg" \
+curl -X POST "$EINK_BASE_URL/c/$CHANNEL/image?dither=floyd-steinberg" \
   -H "Authorization: Bearer $EINK_PUSH_TOKEN" \
   -H "Content-Type: image/png" \
   --data-binary @dashboard.png
@@ -215,7 +264,7 @@ palette.extend([0, 0, 0] * (256 - len(LEVELS)))
 palette_img = Image.new("P", (1, 1))
 palette_img.putpalette(palette)
 
-# `img` is your 8-bit grayscale render
+# `img` is your 8-bit grayscale render at the channel's dimensions
 quantized = img.convert("RGB").quantize(
     palette=palette_img, dither=Image.Dither.FLOYDSTEINBERG
 ).convert("L")
@@ -232,22 +281,22 @@ quantized = img.convert("RGB").quantize(
   it out.
 - **Don't** include color, alpha, or 16-bit depth — they get downconverted
   unpredictably.
-- **Don't** rely on `GET /dashboard.png` succeeding before your first
-  push — it returns 404 until something is stored.
-- **Don't** hardcode dimensions you assume from another e-paper. The
-  Inkplate 10 is 1200×825. Other Inkplate models have different sizes.
+- **Don't** push to channels you weren't told you own. Channels are
+  global per service and will overwrite whatever's there.
+- **Don't** rely on `GET .../dashboard.png` succeeding before your first
+  push — it returns 404 until something is stored for that channel.
 
 ---
 
 ## Security model
 
-- **Push token** authenticates POST/DELETE. Anyone with it can
-  overwrite the dashboard. Rotate via redeploy if leaked.
+- **Push token** authenticates POST/DELETE on every channel. Anyone with
+  it can overwrite any channel. Rotate via redeploy if leaked.
 - **Read token** is separate, lives on the Inkplate firmware, only
   authorizes GET. It cannot push.
 - TLS is terminated by the cluster's reverse proxy. The pod itself
   speaks plain HTTP internally.
-- The board accepts the server's TLS cert without verification today
+- The boards accept the server's TLS cert without verification today
   (`setInsecure()` in firmware), so the bearer token is the primary
   authentication, not certificate pinning. Future hardening: pin the
   operator's Let's Encrypt root.
@@ -261,12 +310,12 @@ set them directly:
 
 | Env var | Purpose |
 |---|---|
-| `EINK_PUSH_TOKEN` | required; secret you authenticate with |
+| `EINK_PUSH_TOKEN` | required; secret renderers authenticate with |
 | `EINK_READ_TOKEN` | required; baked into firmware |
-| `EINK_PUBLIC_BASE_URL` | base URL the board uses for image_url |
-| `EINK_REFRESH_INTERVAL_S` | how often the board polls (default 300) |
-| `EINK_OVERLAY_CLOCK` | board overlays `HH:MM` on each new image (default false) |
-| `EINK_DATA_DIR` | where the PNG + meta is persisted (default `/data`) |
+| `EINK_PUBLIC_BASE_URL` | base URL the boards build their image_url from |
+| `EINK_REFRESH_INTERVAL_S` | how often the boards poll (default 300) |
+| `EINK_OVERLAY_CLOCK` | boards overlay `HH:MM` on each new image (default false) |
+| `EINK_DATA_DIR` | where channel storage lives (default `/data`) |
 | `EINK_MAX_UPLOAD_BYTES` | upper bound for POST body (default 8 MiB) |
 
 If you need one of these changed, talk to the operator.
