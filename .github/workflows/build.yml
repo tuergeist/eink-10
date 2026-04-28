@@ -67,3 +67,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           provenance: false
+
+      - name: Compute short SHA
+        id: shortsha
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: echo "sha=$(echo ${{ github.sha }} | cut -c1-7)" >> $GITHUB_OUTPUT
+
+      - name: Trigger k8s-infra deploy
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.K8S_INFRA_DISPATCH_TOKEN }}
+          repository: expert-sieve/k8s-infra
+          event-type: deploy-simple
+          client-payload: '{"app":"eink","image_tag":"sha-${{ steps.shortsha.outputs.sha }}"}'
