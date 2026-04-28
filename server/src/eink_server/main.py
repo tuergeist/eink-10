@@ -63,6 +63,13 @@ PANEL_SPECS: dict[str, dict[str, int]] = {
 # escape the data dir or confuse downstream tooling.
 CHANNEL_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
+# Channel that legacy root paths (/image, /config.json, /dashboard.png)
+# transparently delegate to. Bridges feed clients that pre-date the
+# channel refactor; remove the legacy aliases once everything is on /c/.
+LEGACY_DEFAULT_CHANNEL = os.environ.get(
+    "EINK_LEGACY_DEFAULT_CHANNEL", "inkplate10"
+)
+
 
 def _resolve_spec_path() -> Optional[Path]:
     """Find the renderer spec on disk. Container puts it at /app/...; for
@@ -217,6 +224,40 @@ def dashboard(
     if meta is not None:
         headers["ETag"] = meta.last_modified
     return Response(content=data, media_type="image/png", headers=headers)
+
+
+# --- legacy aliases ----------------------------------------------------------
+# DEPRECATED. Pre-channel clients still hit /image, /config.json, and
+# /dashboard.png. We delegate those to LEGACY_DEFAULT_CHANNEL so nothing
+# breaks while feeds migrate. Remove once every consumer is on /c/.
+@app.post("/image", deprecated=True)
+async def push_image_legacy(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+    dither: str = Query("none", pattern="^(none|floyd-steinberg)$"),
+) -> JSONResponse:
+    return await push_image(request, LEGACY_DEFAULT_CHANNEL, authorization, dither)
+
+
+@app.delete("/image", status_code=204, deprecated=True)
+def delete_image_legacy(
+    authorization: Optional[str] = Header(None),
+) -> Response:
+    return delete_image(LEGACY_DEFAULT_CHANNEL, authorization)
+
+
+@app.get("/config.json", deprecated=True)
+def config_legacy(
+    authorization: Optional[str] = Header(None),
+) -> JSONResponse:
+    return config(LEGACY_DEFAULT_CHANNEL, authorization)
+
+
+@app.get("/dashboard.png", deprecated=True)
+def dashboard_legacy(
+    authorization: Optional[str] = Header(None),
+) -> Response:
+    return dashboard(LEGACY_DEFAULT_CHANNEL, authorization)
 
 
 def run() -> None:
