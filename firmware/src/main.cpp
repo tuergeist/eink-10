@@ -24,16 +24,6 @@
 #define EINK_CHANNEL "inkplate10"
 #endif
 
-// EINK_HAS_BATTERY = 1 means we trust display.readBattery() to reflect cell
-// voltage and can use voltage thresholds to detect Low / USB-only states.
-// = 0 means no battery is wired up — readBattery() returns whatever the
-// charger IC's BAT pin floats to (typically ~USB voltage), which is
-// indistinguishable from "full battery". In that case we skip the
-// threshold logic and always classify as Usb so the badge accurately
-// reflects "running on USB, no cell to drain".
-#ifndef EINK_HAS_BATTERY
-#define EINK_HAS_BATTERY 1
-#endif
 
 static constexpr const char *DEFAULT_CONFIG_URL =
     "https://eink.ein-service.de/c/" EINK_CHANNEL "/config.json";
@@ -45,11 +35,15 @@ static constexpr uint32_t NTP_TIMEOUT_MS = 5000;
 // Europe/Berlin POSIX TZ. CEST/CET DST rules; works without tzdata files.
 static constexpr const char *TZ_RULE = "CET-1CEST,M3.5.0,M10.5.0/3";
 
-// Battery thresholds (Li-Po single cell). Below BATT_USB_ONLY we assume
-// there's no battery installed — the board runs from USB and we don't show
-// a low-battery indicator. Below BATT_LOW (3.4 V) we extend the sleep cycle
-// to stretch the remaining capacity.
-static constexpr float BATT_USB_ONLY = 2.5f;
+// Battery thresholds (Li-Po single cell). Below BATT_LOW (3.4 V) we render
+// a low-battery icon and stretch the sleep cycle to extend remaining
+// runtime. BATT_NOISE_FLOOR (2.5 V) is a sanity bound: voltages below
+// that are treated as sensor noise / disconnected divider, not a real low
+// cell — typical of an Inkplate 10 running on USB-only with no battery
+// wired in (charger IC's BAT pin floats to ~USB voltage), or of a
+// physically broken sense path. We can't tell USB-only from a charged
+// cell from voltage alone, so we don't try.
+static constexpr float BATT_NOISE_FLOOR = 2.5f;
 static constexpr float BATT_LOW = 3.4f;
 static constexpr uint32_t LOW_BAT_REFRESH_MULT = 6;
 
@@ -101,24 +95,17 @@ static float batteryVolts() {
 // Note: enum values use mixed case because Arduino headers `#define LOW 0x0`
 // and `#define HIGH 0x1` as preprocessor macros — those expand inside any
 // identifier, even scoped enum members.
-enum class PowerState { Ok, Low, Usb };
+enum class PowerState { Ok, Low };
 
 static PowerState classifyPower(float v) {
-#if EINK_HAS_BATTERY
-    if (v < BATT_USB_ONLY) return PowerState::Usb;
-    if (v < BATT_LOW) return PowerState::Low;
+    if (v >= BATT_NOISE_FLOOR && v < BATT_LOW) return PowerState::Low;
     return PowerState::Ok;
-#else
-    (void)v;
-    return PowerState::Usb;
-#endif
 }
 
 static const char *powerStateName(PowerState s) {
     switch (s) {
         case PowerState::Ok:  return "OK";
         case PowerState::Low: return "LOW";
-        case PowerState::Usb: return "USB";
     }
     return "?";
 }
@@ -176,47 +163,22 @@ static void drawBatteryLowIcon(int x, int y) {
     display.fillRect(x + 3, y + 3, 4, bodyH - 6, 0);
 }
 
-// USB trident icon, ~22×28 px. Classic three-pronged USB symbol with a
-// solid stem, an arrow tip on top, and circle/square branch terminators.
-static void drawUsbIcon(int x, int y) {
-    int cx = x + 11;  // stem center
-    // Vertical stem
-    display.fillRect(cx - 1, y + 4, 3, 22, 0);
-    // Arrow head pointing up
-    display.fillTriangle(cx, y, cx - 5, y + 6, cx + 5, y + 6, 0);
-    // Right branch ending in a small filled square
-    display.drawLine(cx + 1, y + 12, cx + 8, y + 12, 0);
-    display.drawLine(cx + 8, y + 12, cx + 8, y + 18, 0);
-    display.fillRect(cx + 6, y + 18, 5, 4, 0);
-    // Left branch ending in a small filled circle
-    display.drawLine(cx,     y + 16, cx - 8, y + 16, 0);
-    display.drawLine(cx - 8, y + 16, cx - 8, y + 22, 0);
-    display.fillCircle(cx - 8, y + 22, 3, 0);
-}
-
-// Top-right power-status badge: low-battery icon when on a draining cell,
-// USB-trident icon when no battery is detected, nothing when healthy.
-// Only rendered when we're already redrawing the display for a new image
-// — we don't force a refresh just to update the badge.
+// Top-right low-battery badge. Only rendered when we're already
+// redrawing the display for a new image — we don't force a refresh just
+// to update the badge.
 static void drawPowerStatusOverlay(PowerState s) {
-    if (s == PowerState::Ok) return;
+    if (s != PowerState::Low) return;
 
     constexpr int margin = 12;
     constexpr int padding = 6;
-    int iconW, iconH;
-    if (s == PowerState::Usb) { iconW = 22; iconH = 28; }
-    else                       { iconW = 33; iconH = 14; }
+    constexpr int iconW = 33, iconH = 14;
     int boxW = iconW + padding * 2;
     int boxH = iconH + padding * 2;
     int boxX = display.width() - boxW - margin;
     int boxY = margin;
 
     display.fillRect(boxX, boxY, boxW, boxH, 7);
-    if (s == PowerState::Usb) {
-        drawUsbIcon(boxX + padding, boxY + padding);
-    } else {
-        drawBatteryLowIcon(boxX + padding, boxY + padding);
-    }
+    drawBatteryLowIcon(boxX + padding, boxY + padding);
     Serial.printf("[batt] overlay symbol=%s\n", powerStateName(s));
 }
 
