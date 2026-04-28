@@ -24,6 +24,17 @@
 #define EINK_CHANNEL "inkplate10"
 #endif
 
+// EINK_HAS_BATTERY = 1 means we trust display.readBattery() to reflect cell
+// voltage and can use voltage thresholds to detect Low / USB-only states.
+// = 0 means no battery is wired up — readBattery() returns whatever the
+// charger IC's BAT pin floats to (typically ~USB voltage), which is
+// indistinguishable from "full battery". In that case we skip the
+// threshold logic and always classify as Usb so the badge accurately
+// reflects "running on USB, no cell to drain".
+#ifndef EINK_HAS_BATTERY
+#define EINK_HAS_BATTERY 1
+#endif
+
 static constexpr const char *DEFAULT_CONFIG_URL =
     "https://eink.ein-service.de/c/" EINK_CHANNEL "/config.json";
 static constexpr uint32_t DEFAULT_REFRESH_S = 300;
@@ -87,8 +98,29 @@ static float batteryVolts() {
     return display.readBattery();
 }
 
-static bool batteryLow(float v) {
-    return v >= BATT_USB_ONLY && v < BATT_LOW;
+// Note: enum values use mixed case because Arduino headers `#define LOW 0x0`
+// and `#define HIGH 0x1` as preprocessor macros — those expand inside any
+// identifier, even scoped enum members.
+enum class PowerState { Ok, Low, Usb };
+
+static PowerState classifyPower(float v) {
+#if EINK_HAS_BATTERY
+    if (v < BATT_USB_ONLY) return PowerState::Usb;
+    if (v < BATT_LOW) return PowerState::Low;
+    return PowerState::Ok;
+#else
+    (void)v;
+    return PowerState::Usb;
+#endif
+}
+
+static const char *powerStateName(PowerState s) {
+    switch (s) {
+        case PowerState::Ok:  return "OK";
+        case PowerState::Low: return "LOW";
+        case PowerState::Usb: return "USB";
+    }
+    return "?";
 }
 
 static bool connectWifi() {
@@ -130,32 +162,62 @@ static bool fetchString(const String &url, String &out) {
     return true;
 }
 
-// Top-right "LOW BAT 3.32V" indicator drawn into the framebuffer. Only
-// rendered when we're already redrawing the display for a new image — we
-// don't trigger a refresh just to show this.
-static void drawLowBatteryOverlay(float volts) {
-    char buf[24];
-    snprintf(buf, sizeof(buf), "LOW BAT %.2fV", volts);
+// Battery icon, ~36×16 px, drawn at top-left of the supplied origin.
+// Renders an empty cell with a small slice of charge on the left, evoking
+// the universal "battery low" iconography.
+static void drawBatteryLowIcon(int x, int y) {
+    constexpr int bodyW = 30, bodyH = 14;
+    // Double-line outline for visibility on dithered backgrounds.
+    display.drawRect(x,     y,     bodyW, bodyH, 0);
+    display.drawRect(x + 1, y + 1, bodyW - 2, bodyH - 2, 0);
+    // Positive terminal stub.
+    display.fillRect(x + bodyW, y + 4, 3, bodyH - 8, 0);
+    // ~15% charge worth of fill, anchored on the left.
+    display.fillRect(x + 3, y + 3, 4, bodyH - 6, 0);
+}
 
-    display.setTextSize(2);
-    display.setTextWrap(false);
-    int16_t x1, y1;
-    uint16_t tw, th;
-    display.getTextBounds(buf, 0, 0, &x1, &y1, &tw, &th);
+// USB trident icon, ~22×28 px. Classic three-pronged USB symbol with a
+// solid stem, an arrow tip on top, and circle/square branch terminators.
+static void drawUsbIcon(int x, int y) {
+    int cx = x + 11;  // stem center
+    // Vertical stem
+    display.fillRect(cx - 1, y + 4, 3, 22, 0);
+    // Arrow head pointing up
+    display.fillTriangle(cx, y, cx - 5, y + 6, cx + 5, y + 6, 0);
+    // Right branch ending in a small filled square
+    display.drawLine(cx + 1, y + 12, cx + 8, y + 12, 0);
+    display.drawLine(cx + 8, y + 12, cx + 8, y + 18, 0);
+    display.fillRect(cx + 6, y + 18, 5, 4, 0);
+    // Left branch ending in a small filled circle
+    display.drawLine(cx,     y + 16, cx - 8, y + 16, 0);
+    display.drawLine(cx - 8, y + 16, cx - 8, y + 22, 0);
+    display.fillCircle(cx - 8, y + 22, 3, 0);
+}
 
-    constexpr int padding = 6;
+// Top-right power-status badge: low-battery icon when on a draining cell,
+// USB-trident icon when no battery is detected, nothing when healthy.
+// Only rendered when we're already redrawing the display for a new image
+// — we don't force a refresh just to update the badge.
+static void drawPowerStatusOverlay(PowerState s) {
+    if (s == PowerState::Ok) return;
+
     constexpr int margin = 12;
-    int boxW = tw + padding * 2;
-    int boxH = th + padding * 2;
+    constexpr int padding = 6;
+    int iconW, iconH;
+    if (s == PowerState::Usb) { iconW = 22; iconH = 28; }
+    else                       { iconW = 33; iconH = 14; }
+    int boxW = iconW + padding * 2;
+    int boxH = iconH + padding * 2;
     int boxX = display.width() - boxW - margin;
     int boxY = margin;
 
     display.fillRect(boxX, boxY, boxW, boxH, 7);
-    display.drawRect(boxX, boxY, boxW, boxH, 0);
-    display.setTextColor(0, 7);
-    display.setCursor(boxX + padding - x1, boxY + padding - y1);
-    display.print(buf);
-    Serial.printf("[batt] overlay '%s'\n", buf);
+    if (s == PowerState::Usb) {
+        drawUsbIcon(boxX + padding, boxY + padding);
+    } else {
+        drawBatteryLowIcon(boxX + padding, boxY + padding);
+    }
+    Serial.printf("[batt] overlay symbol=%s\n", powerStateName(s));
 }
 
 // Pull NTP time, return true if we got a plausible epoch.
@@ -250,12 +312,8 @@ void setup() {
     prefs.begin("eink", false);
 
     float battV = batteryVolts();
-    bool lowBat = batteryLow(battV);
-    if (battV < BATT_USB_ONLY) {
-        Serial.println("[batt] no battery / USB-only");
-    } else {
-        Serial.printf("[batt] %.2fV%s\n", battV, lowBat ? " (LOW)" : "");
-    }
+    PowerState pstate = classifyPower(battV);
+    Serial.printf("[batt] %.2fV state=%s\n", battV, powerStateName(pstate));
 
     if (!connectWifi()) {
         deepSleep(RETRY_SLEEP_S);
@@ -304,9 +362,7 @@ void setup() {
             if (overlayClock) {
                 drawClockOverlay();
             }
-            if (lowBat) {
-                drawLowBatteryOverlay(battV);
-            }
+            drawPowerStatusOverlay(pstate);
             display.display();
             prefs.putString("last_modified", lastMod);
             Serial.println("[img] displayed");
@@ -315,7 +371,7 @@ void setup() {
         }
     }
 
-    if (lowBat) {
+    if (pstate == PowerState::Low) {
         refreshS *= LOW_BAT_REFRESH_MULT;
         Serial.printf("[batt] low → stretched sleep to %us\n", refreshS);
     }
