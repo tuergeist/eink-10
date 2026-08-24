@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from . import draw as drawing
 from .grafana import fetch_dashboard, run_queries
 from .layout import place
-from .panels import build_panels, time_range_millis
+from .panels import build_panels, snap_range, time_range_millis
 from .push import push_png
 
 
@@ -35,7 +35,8 @@ def _env(name: str, default: str | None = None) -> str:
 def render_png(width: int, height: int, dashboard: dict,
                results: dict, now: datetime | None = None) -> bytes:
     """The pure part of a run: dashboard plus results become a PNG."""
-    t_from, t_to = time_range_millis(dashboard, now)
+    # The axis is snapped, the query was not — see panels.snap_range.
+    t_from, t_to = snap_range(*time_range_millis(dashboard, now))
     panels = build_panels(dashboard, results)
     box = drawing.content_box(width, height)
     rects = place(panels, box)

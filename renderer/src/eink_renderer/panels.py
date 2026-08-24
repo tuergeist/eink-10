@@ -26,6 +26,10 @@ _GRAFANA_TYPE_TO_KIND = {
 }
 
 _RELATIVE_RE = re.compile(r"^now(?:-(\d+)([smhdwMy]))?$")
+
+MINUTE_MS = 60_000
+HOUR_MS = 3_600_000
+DAY_MS = 86_400_000
 _UNIT_SECONDS = {
     "s": 1, "m": 60, "h": 3600, "d": 86400,
     "w": 604800, "M": 2592000, "y": 31536000,
@@ -87,6 +91,35 @@ def time_range_millis(dashboard: dict, now: datetime | None = None
     a = parse_relative(str(tr.get("from", "now-6h")), now)
     b = parse_relative(str(tr.get("to", "now")), now)
     return a.timestamp() * 1000, b.timestamp() * 1000
+
+
+def snap_range(t_from: float, t_to: float) -> tuple[float, float]:
+    """Round a time range down onto a stable grid, for drawing only.
+
+    A dashboard range of ``now-30d`` slides continuously, so every data
+    point drifts along the time axis — measured at 0.69 px per hour on a
+    500 px plot. The picture would then differ on every run, the image hash
+    would change, and the panel would burn a full refresh hourly even when
+    no number moved.
+
+    Snapping to whole days makes the axis stand still for 24 hours; the
+    image changes when the data changes, plus once a day when the window
+    rolls over. Short ranges get a finer grid, because a six-hour dashboard
+    snapped to days would collapse to nothing.
+
+    The *query* keeps the exact range — this only governs the axis, so what
+    Grafana would return is unchanged.
+    """
+    span = t_to - t_from
+    if span >= 2 * DAY_MS:
+        unit = DAY_MS
+    elif span >= 2 * HOUR_MS:
+        unit = HOUR_MS
+    else:
+        unit = MINUTE_MS
+    end = (t_to // unit) * unit
+    steps = max(1, round(span / unit))
+    return end - steps * unit, end
 
 
 def _split_frame(frame: dict) -> tuple[tuple[float, ...] | None, list[tuple[str, tuple]]]:

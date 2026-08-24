@@ -114,3 +114,32 @@ def test_panels_come_back_in_reading_order():
         {},
     )
     assert [p.id for p in panels] == [1, 2, 3]
+
+
+def test_a_thirty_day_range_snaps_to_whole_days():
+    from eink_renderer.panels import DAY_MS, snap_range
+    t_to = 1787571234567          # some point mid-day
+    a, b = snap_range(t_to - 30 * DAY_MS, t_to)
+    assert b % DAY_MS == 0
+    assert (b - a) == 30 * DAY_MS
+
+
+def test_snapping_holds_the_axis_still_for_a_whole_day():
+    # This is the property that keeps the hourly cron from burning a panel
+    # refresh: same day in, same axis out.
+    from eink_renderer.panels import DAY_MS, HOUR_MS, snap_range
+    base = 1787571234567
+    first = snap_range(base - 30 * DAY_MS, base)
+    for hours in range(1, 24):
+        t = base + hours * HOUR_MS
+        if (t // DAY_MS) != (base // DAY_MS):
+            break
+        assert snap_range(t - 30 * DAY_MS, t) == first
+
+
+def test_a_short_range_is_not_collapsed_onto_days():
+    from eink_renderer.panels import HOUR_MS, snap_range
+    t_to = 1787571234567
+    a, b = snap_range(t_to - 6 * HOUR_MS, t_to)
+    assert (b - a) == 6 * HOUR_MS
+    assert b % HOUR_MS == 0

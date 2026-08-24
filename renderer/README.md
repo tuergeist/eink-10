@@ -66,10 +66,20 @@ That is all the renderer needs: read and query.
 
 **The image must stay byte-identical for identical numbers.** The service
 compares hashes; a new hash costs the panel a real refresh (~2 s of
-flashing, a slice of its lifetime). That is why **no time is drawn into
-the image** — the firmware draws it itself whenever a new image arrives. A
-timestamp in the PNG would force an hourly refresh even when no number
-changed. `test_the_same_input_yields_the_same_bytes` guards this.
+flashing, a slice of its lifetime). Two things follow.
+
+**No time is drawn into the image** — the firmware draws it itself
+whenever a new image arrives. A timestamp in the PNG would force an hourly
+refresh even when no number changed.
+
+**The time axis is snapped to whole days** (`panels.snap_range`). A
+dashboard range of `now-30d` slides continuously, so without snapping
+every data point drifts along the axis — measured at 0.69 px per hour on a
+500 px plot, enough to change the image on every single run. The query
+still uses the exact range; only the axis stands still.
+`test_the_same_input_yields_the_same_bytes` and
+`test_an_hour_later_yields_the_same_image_when_the_data_is_unchanged`
+guard both.
 
 **Two corners stay empty.** Bottom right the firmware draws the clock, top
 right a battery symbol when the cell is weak (`drawClockOverlay`,
