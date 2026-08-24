@@ -1,0 +1,38 @@
+[project]
+name = "eink-renderer"
+version = "0.1.0"
+description = "Renders a Grafana dashboard as an e-ink-ready PNG and pushes it to the eink service"
+authors = [
+    { name = "Christoph Becker", email = "mail@ch-becker.de" },
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pillow>=11.0",
+    "requests>=2.32",
+]
+
+[project.scripts]
+eink-render = "eink_renderer.main:main"
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+distribution = true
+
+[tool.pdm.build]
+includes = ["src/eink_renderer"]
+
+[tool.pdm.dev-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pdm.scripts]
+render = {call = "eink_renderer.main:main", env_file = ".env.local"}
+test = "pytest -q"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

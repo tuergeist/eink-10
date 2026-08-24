@@ -7,6 +7,14 @@ server/dist/
 server/build/
 server/.env.local
 server/data-local/
+renderer/.venv/
+renderer/__pypackages__/
+renderer/.pdm-python
+renderer/.pdm-build/
+renderer/dist/
+renderer/build/
+renderer/.env.local
+renderer/.pytest_cache/
 **/__pycache__/
 **/*.pyc
 
