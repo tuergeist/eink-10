@@ -125,7 +125,7 @@ def test_a_thirty_day_range_snaps_to_whole_days():
 
 
 def test_snapping_holds_the_axis_still_for_a_whole_day():
-    # This is the property that keeps the hourly cron from burning a panel
+    # This is the property that keeps the cron from burning a panel
     # refresh: same day in, same axis out.
     from eink_renderer.panels import DAY_MS, HOUR_MS, snap_range
     base = 1787571234567

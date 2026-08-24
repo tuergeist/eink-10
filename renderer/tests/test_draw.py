@@ -87,7 +87,7 @@ def test_the_battery_corner_stays_empty():
 
 def test_the_same_input_yields_the_same_bytes():
     # Otherwise every run pushes a new hash and the panel refreshes
-    # hourly even when no number changed.
+    # on every run even when no number changed.
     assert render_png(WIDTH, HEIGHT, DASHBOARD, RESULTS, NOW) == \
            render_png(WIDTH, HEIGHT, DASHBOARD, RESULTS, NOW)
 
@@ -120,7 +120,7 @@ def test_long_labels_wrap_instead_of_losing_their_ending():
 def test_an_hour_later_yields_the_same_image_when_the_data_is_unchanged():
     # The dashboard range is now-30d and slides continuously; without the
     # axis snapping in panels.snap_range every point drifts ~0.69 px per
-    # hour and the hourly cron would force a panel refresh every time.
+    # hour and the cron would force a panel refresh on every run.
     later = datetime(2026, 8, 24, 13, 0, tzinfo=timezone.utc)
     assert render_png(WIDTH, HEIGHT, DASHBOARD, RESULTS, NOW) == \
            render_png(WIDTH, HEIGHT, DASHBOARD, RESULTS, later)

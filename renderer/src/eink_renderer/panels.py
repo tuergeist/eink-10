@@ -99,8 +99,8 @@ def snap_range(t_from: float, t_to: float) -> tuple[float, float]:
     A dashboard range of ``now-30d`` slides continuously, so every data
     point drifts along the time axis — measured at 0.69 px per hour on a
     500 px plot. The picture would then differ on every run, the image hash
-    would change, and the panel would burn a full refresh hourly even when
-    no number moved.
+    would change, and the panel would burn a full refresh on every run even
+    when no number moved.
 
     Snapping to whole days makes the axis stand still for 24 hours; the
     image changes when the data changes, plus once a day when the window
