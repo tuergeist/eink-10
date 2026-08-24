@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: eink-grafana-renderer
+  namespace: eink
+  labels:
+    app: eink-grafana-renderer
+spec:
+  # Hourly, on the hour. The panel only redraws when the image hash
+  # changed, so a run without new numbers costs no refresh.
+  schedule: "0 * * * *"
+  timeZone: "Europe/Berlin"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # A run takes a few seconds. If it hangs, either Grafana or the eink
+      # service is unreachable — better to abort and leave the old image up
+      # than to block the next run.
+      activeDeadlineSeconds: 300
+      ttlSecondsAfterFinished: 3600
+      template:
+        metadata:
+          labels:
+            app: eink-grafana-renderer
+        spec:
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10002
+            # Without this the namespace's "restricted" PodSecurity policy
+            # warns on every admission; today only a warning, an error the
+            # day the namespace switches from warn to enforce.
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: renderer
+              image: ghcr.io/tuergeist/eink-10/renderer:latest
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: GRAFANA_URL
+                  value: "https://grafana.dev.review-spark.com"
+                - name: GRAFANA_DASHBOARD_UID
+                  value: "07cfb989-74b8-4a8b-bbf7-51aa7ae76d91"
+                - name: GRAFANA_TOKEN
+                  valueFrom:
+                    secretKeyRef: { name: eink-renderer, key: GRAFANA_TOKEN }
+                - name: EINK_BASE_URL
+                  # Service in the same namespace — no detour via the ingress.
+                  value: "http://eink:8989"
+                - name: EINK_CHANNEL
+                  value: "inkplate10"
+                - name: EINK_PUSH_TOKEN
+                  valueFrom:
+                    # The same secret the service pulls in via envFrom.
+                    secretKeyRef: { name: eink-secrets, key: EINK_PUSH_TOKEN }
+              resources:
+                requests: { cpu: "50m",  memory: "128Mi" }
+                limits:   { cpu: "1",    memory: "512Mi" }
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: { drop: ["ALL"] }
