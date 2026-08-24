@@ -31,6 +31,11 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 10002
+            # Without this the namespace's "restricted" PodSecurity policy
+            # warns on every admission; today only a warning, an error the
+            # day the namespace switches from warn to enforce.
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: renderer
               image: ghcr.io/tuergeist/eink-10/renderer:latest
