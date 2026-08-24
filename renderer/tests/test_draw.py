@@ -115,3 +115,18 @@ def test_long_labels_wrap_instead_of_losing_their_ending():
     lines = wrap_lines("Verschiedene POIs (30 Tage)", font(19), 240, max_lines=2)
     assert len(lines) == 2
     assert "".join(lines).replace(" ", "").endswith("Tage)")
+
+
+def test_an_hour_later_yields_the_same_image_when_the_data_is_unchanged():
+    # The dashboard range is now-30d and slides continuously; without the
+    # axis snapping in panels.snap_range every point drifts ~0.69 px per
+    # hour and the hourly cron would force a panel refresh every time.
+    later = datetime(2026, 8, 24, 13, 0, tzinfo=timezone.utc)
+    assert render_png(WIDTH, HEIGHT, DASHBOARD, RESULTS, NOW) == \
+           render_png(WIDTH, HEIGHT, DASHBOARD, RESULTS, later)
+
+
+def test_the_next_day_does_move_the_axis():
+    tomorrow = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
+    assert render_png(WIDTH, HEIGHT, DASHBOARD, RESULTS, NOW) != \
+           render_png(WIDTH, HEIGHT, DASHBOARD, RESULTS, tomorrow)
