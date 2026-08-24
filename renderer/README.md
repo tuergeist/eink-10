@@ -1,8 +1,8 @@
 # Grafana renderer
 
 Draws a Grafana dashboard so it stays readable on an e-ink panel and
-sends the image to the eink service. A CronJob runs it hourly; the panel
-picks it up the next time it wakes.
+sends the image to the eink service. A CronJob runs it every 30 minutes;
+the panel picks it up the next time it wakes.
 
 ## Why not just a screenshot
 
@@ -69,8 +69,8 @@ compares hashes; a new hash costs the panel a real refresh (~2 s of
 flashing, a slice of its lifetime). Two things follow.
 
 **No time is drawn into the image** — the firmware draws it itself
-whenever a new image arrives. A timestamp in the PNG would force an hourly
-refresh even when no number changed.
+whenever a new image arrives. A timestamp in the PNG would force a refresh
+on every single run, even when no number changed.
 
 **The time axis is snapped to whole days** (`panels.snap_range`). A
 dashboard range of `now-30d` slides continuously, so without snapping
