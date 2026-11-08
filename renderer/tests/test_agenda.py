@@ -455,3 +455,64 @@ def test_band_text_is_drawn_when_nothing_is_left():
     gone = agenda.render_png(1200, 825, DAY, [_timed(16, 0, 17, 0)], now=_at(18, 20),
                              tomorrow=tomorrow)
     assert with_event != gone
+
+
+# --- tomorrow fills the room that is there -------------------------------------
+
+def test_tomorrow_fills_the_available_height():
+    busy = _owners(agenda.layout_blocks([_timed(17, 30, 18, 30)], DAY))
+    for today, bottom in ((busy, 777), (_owners([]), 777)):
+        p = agenda.plan_split(_at(18, 20), today, _owners([]), 176, bottom)
+        rows = (p.lower[1] - p.lower[0]) // agenda.SLOT
+        used = rows * p.lower_row_h
+        assert p.lower_top + used <= bottom
+        assert bottom - (p.lower_top + used) < rows        # less than a pixel per row left over
+
+
+def test_more_room_means_taller_rows_and_the_empty_band_gives_the_most():
+    busy = _owners(agenda.layout_blocks([_timed(17, 30, 18, 30)], DAY))
+    with_events = agenda.plan_split(_at(18, 20), busy, _owners([]), 176, 777)
+    nothing_left = agenda.plan_split(_at(18, 20), _owners([]), _owners([]), 176, 777)
+    assert agenda.ROW_H_COMPACT <= with_events.lower_row_h < nothing_left.lower_row_h <= agenda.ROW_H
+    assert nothing_left.lower_row_h >= agenda.COMPACT_BELOW      # titles with times fit again
+
+
+def test_event_font_in_tomorrows_rows_is_never_below_the_date_labels_size():
+    for row_h in range(agenda.ROW_H_COMPACT, agenda.ROW_H + 1):
+        assert agenda.compact_font_size(row_h) >= agenda.MIN_EVENT_FONT
+    assert agenda.compact_font_size(agenda.ROW_H_COMPACT) == agenda.MIN_EVENT_FONT
+    assert agenda.compact_font_size(agenda.COMPACT_BELOW - 1) > agenda.MIN_EVENT_FONT
+
+
+def test_with_little_room_tomorrow_shows_fewer_hours_instead_of_smaller_rows():
+    busy = _owners(agenda.layout_blocks([_timed(17, 30, 18, 30)], DAY))
+    p = agenda.plan_split(_at(18, 20), busy, _owners([]), 176, 777)
+    assert p.lower_row_h >= agenda.ROW_H_COMPACT
+    assert p.lower[1] - p.lower[0] <= (777 - p.lower_top) // agenda.ROW_H_COMPACT * agenda.SLOT
+
+
+def test_too_long_a_day_drops_empty_hours_before_cutting_into_events():
+    # events 09:00-10:00 only; the default range 08-18 is longer than the room allows
+    tomorrow = _owners(agenda.layout_blocks([_timed(9, 0, 10, 0)], DAY))
+    p = agenda.plan_split(_at(18, 20), _owners(agenda.layout_blocks([_timed(17, 30, 18, 30)], DAY)),
+                          tomorrow, 176, 777)
+    lo, hi = p.lower
+    assert lo <= 9 * 60 and hi >= 10 * 60            # the event is inside
+    assert (hi - lo) // agenda.SLOT * p.lower_row_h <= 777 - p.lower_top
+
+
+def test_late_event_that_does_not_fit_is_kept_by_moving_the_window_not_cut():
+    # events 09:00-10:00 and 16:30-17:30: the default 08-18 is ten hours, only nine fit;
+    # the empty first hour goes, the late event stays
+    tomorrow = _owners(agenda.layout_blocks([_timed(9, 0, 10, 0), _timed(16, 30, 17, 30)], DAY))
+    p = agenda.plan_split(_at(18, 20), _owners(agenda.layout_blocks([_timed(17, 30, 18, 30)], DAY)),
+                          tomorrow, 176, 777)
+    lo, hi = p.lower
+    assert (lo, hi) == (9 * 60, 18 * 60)
+
+
+def test_hint_for_events_that_still_do_not_fit_renders():
+    entries = [_timed(9, 0, 10, 0), _timed(17, 30, 18, 20)]
+    tomorrow = (NEXT, [agenda.Entry(e.start.replace(day=11), e.end.replace(day=11), e.title, "")
+                       for e in entries] + [agenda.Entry(None, None, "x", "")])
+    assert agenda.render_png(1200, 825, DAY, [_timed(17, 30, 18, 30)], now=_at(16, 30), tomorrow=tomorrow)

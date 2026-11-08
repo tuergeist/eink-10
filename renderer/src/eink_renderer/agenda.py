@@ -86,7 +86,11 @@ ALLDAY_H = 34
 SPLIT_FROM_HOUR = 13
 UPPER_MIN_MINUTES = 3 * 60   # the upper part covers at least three hours
 ROW_H = 30                   # pixels per 30 minutes, normal
-ROW_H_COMPACT = 15           # ... in the condensed preview of tomorrow
+MIN_EVENT_FONT = 15          # no event text below this: it is the size of tomorrow's
+                             # date label ("Mo 09.11."), and the user wants nothing smaller
+ROW_H_COMPACT = 19           # least pixels per 30 minutes for tomorrow: fits that font;
+                             # with less room tomorrow shows fewer hours instead
+COMPACT_BELOW = 22           # below this row height tomorrow shows the title only
 SPLIT_GAP = 12
 EMPTY_BAND_H = 36            # thin band instead of today's hours when nothing is left
 EMPTY_TEXT = "Keine Termine heute mehr"
@@ -421,18 +425,26 @@ def _frame(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int,
     return bar + (4 if compact else 6)
 
 
+def compact_font_size(row_h: int) -> int:
+    """Title size in tomorrow's condensed rows: grows with the row, never below
+    MIN_EVENT_FONT."""
+    return max(MIN_EVENT_FONT, min(MIN_EVENT_FONT + 1, row_h - 4))
+
+
 def _draw_block(draw: ImageDraw.ImageDraw, b: Block, x: int, y: int,
-                w: int, h: int, compact: bool = False) -> None:
+                w: int, h: int, compact: bool = False,
+                row_h: int = ROW_H_COMPACT) -> None:
     e = b.entry
     ink = INK
     inset = _frame(draw, x, y, w, h, e.optional, compact)
 
     if compact:
         # Condensed: the title only; the time shows in the row it sits in.
-        f = font(12, bold=True)
+        size = compact_font_size(row_h)
+        f = font(size, bold=True)
         title = printable(e.title, f) or "(ohne Titel)"
         # In the block's top row, so an overlapping block below cannot cover it.
-        draw.text((x + inset, y + max(0, (min(h, ROW_H_COMPACT) - 14) // 2)),
+        draw.text((x + inset, y + max(0, (min(h, row_h) - size - 2) // 2)),
                   _ellipsize(title, f, w - inset - 4), font=f, fill=ink)
         return
 
@@ -620,7 +632,7 @@ def _draw_day(draw: ImageDraw.ImageDraw, *, x0: int, x1: int,
               compact: bool = False) -> int:
     """Time axis, grid lines and blocks of one day; returns the grid's bottom."""
     rows = (hi - lo) // SLOT
-    label_font = font(12 if compact else 15)
+    label_font = font(14 if compact else 15)
     for i in range(rows + 1):
         y = grid_top + i * row_h
         minute = lo + i * SLOT
@@ -645,7 +657,7 @@ def _draw_day(draw: ImageDraw.ImageDraw, *, x0: int, x1: int,
             bh = max(1, round((b.end - b.start) / SLOT * row_h) - 2)
             if b.parent is not None:
                 draw.rectangle([bx - 3, by - 2, bx + bw + 1, by + bh + 1], fill=PAPER)
-            _draw_block(draw, b, bx, by, bw, bh, compact)
+            _draw_block(draw, b, bx, by, bw, bh, compact, row_h)
     return grid_bottom
 
 
@@ -656,6 +668,7 @@ class SplitPlan:
     lower_top: int             # y of tomorrow's grid
     heading_y: int
     upper_empty: bool = False  # nothing left today: a thin band replaces the hours
+    lower_row_h: int = ROW_H_COMPACT  # pixels per 30 minutes below: fills the space
 
 
 def plan_split(now: datetime, today: dict[str, list[Block]],
@@ -686,10 +699,25 @@ def plan_split(now: datetime, today: dict[str, list[Block]],
 
     blocks = [b for bl in tomorrow.values() for b in bl]
     lo = min([DEFAULT_START] + [b.start // 60 * 60 for b in blocks])
-    want = max([DEFAULT_END] + [-(-b.end // 60) * 60 for b in blocks])
-    fit = lower_h // (2 * ROW_H_COMPACT)          # hours that fit
-    hi = min(want, lo + fit * 60, 24 * 60)
-    return SplitPlan((start, end), (lo, hi), lower_top, heading_y, empty)
+    hi = min(max([DEFAULT_END] + [-(-b.end // 60) * 60 for b in blocks]), 24 * 60)
+    fit = lower_h // (2 * ROW_H_COMPACT)          # hours that fit at the least row height
+    # Too long for the room: drop empty hours first (at the end, then at the
+    # start); only then cut into the events (at the end).
+    excess = (hi - lo) - fit * 60
+    if excess > 0:
+        last = max([b.end for b in blocks], default=lo)
+        cut = min(excess, max(0, hi - -(-last // 60) * 60))
+        hi, excess = hi - cut, excess - cut
+    if excess > 0:
+        first = min([b.start for b in blocks], default=hi)
+        cut = min(excess, max(0, first // 60 * 60 - lo))
+        lo, excess = lo + cut, excess - cut
+    if excess > 0:
+        hi -= excess
+    # Tomorrow uses all the room there is: the rows grow to fill the height.
+    rows = (hi - lo) // SLOT
+    row_h = max(ROW_H_COMPACT, min(ROW_H, lower_h // rows))
+    return SplitPlan((start, end), (lo, hi), lower_top, heading_y, empty, row_h)
 
 
 def render_png(width: int, height: int, day: date, entries: list[Entry],
@@ -777,7 +805,7 @@ def render_png(width: int, height: int, day: date, entries: list[Entry],
     sep_y = plan.heading_y - 4
     draw.line([(MARGIN, sep_y), (x1, sep_y)], fill=INK, width=2)
     wd = WEEKDAYS[next_day.weekday()]
-    day_font = font(15, bold=True)
+    day_font = font(MIN_EVENT_FONT, bold=True)
     draw.text((MARGIN, plan.heading_y + 1), wd, font=day_font, fill=INK)
     draw.text((MARGIN, plan.heading_y + 17), f"{next_day.day:02d}.{next_day.month:02d}.",
               font=day_font, fill=INK)
@@ -788,10 +816,22 @@ def render_png(width: int, height: int, day: date, entries: list[Entry],
 
     lo, hi = plan.lower
     _draw_day(draw, x0=x0, x1=x1, col_x=col_x, grid_top=plan.lower_top, lo=lo, hi=hi,
-              row_h=ROW_H_COMPACT, per_owner=next_blocks, compact=True)
+              row_h=plan.lower_row_h, per_owner=next_blocks,
+              compact=plan.lower_row_h < COMPACT_BELOW)
     if not next_entries:
         draw.text((x0 + 12, plan.lower_top + 8), "Keine Termine",
                   font=font(16), fill=DARK)
+    # Events that did not fit (before lo / after hi): a small hint, not silence.
+    hint_font = font(14)
+    for o in OWNERS:
+        later = [b for b in next_blocks[o] if b.start >= hi]
+        if later:
+            text = f"+{len(later)} ab {min(b.start for b in later) // 60:02d}:{min(b.start for b in later) % 60:02d}"
+            bottom_y = plan.lower_top + ((hi - lo) // SLOT) * plan.lower_row_h
+            w_t = int(hint_font.getlength(text)) + 10
+            tx = col_x[o][1] - w_t - 4
+            draw.rectangle([tx, bottom_y - 19, tx + w_t, bottom_y - 2], fill=PAPER)
+            draw.text((tx + 5, bottom_y - 18), text, font=hint_font, fill=INK)
 
     return _encode(img)
 
