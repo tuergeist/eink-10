@@ -371,6 +371,34 @@ def _clip(blocks: list[Block], lo: int, hi: int) -> list[Block]:
 #   "classic"  the first version: mid-gray fill (normal), light gray + dashed outline (optional)
 BLOCK_STYLE = "tint"
 
+# The panel has eight gray levels; the lightest above white is 219 (86 % of white).
+# Something lighter, e.g. 237, snaps to white. A fine pattern of 219 and white
+# pixels averages in between:
+#   "solid"    all 219 (what it was)
+#   "checker"  every other pixel 219, like a chessboard: average 237, half as dark
+#   "stripes"  every other row 219: average 237
+#   "dots"     one pixel in four 219: average 246, a quarter as dark
+TINT_PATTERN = "checker"
+
+
+def _tint(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int,
+          pattern: str | None = None) -> None:
+    """The light fill behind a normal event."""
+    pattern = pattern or TINT_PATTERN
+    if pattern == "solid":
+        draw.rectangle([x, y, x + w - 1, y + h - 1], fill=FILL)
+        return
+    draw.rectangle([x, y, x + w - 1, y + h - 1], fill=PAPER)
+    if pattern == "stripes":
+        for yy in range(y, y + h, 2):
+            draw.line([(x, yy), (x + w - 1, yy)], fill=FILL)
+    elif pattern == "dots":
+        draw.point([(xx, yy) for yy in range(y, y + h, 2) for xx in range(x, x + w, 2)],
+                   fill=FILL)
+    else:  # checker
+        draw.point([(xx, yy) for yy in range(y, y + h)
+                    for xx in range(x + (yy - y) % 2, x + w, 2)], fill=FILL)
+
 
 def _dashed_vertical(draw: ImageDraw.ImageDraw, x: int, y0: int, y1: int, width: int,
                      on: int, off: int, fill: int) -> None:
@@ -414,7 +442,10 @@ def _frame(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int,
         return 6 if compact else 10
 
     # "bar", and the normal event of "tint"
-    draw.rectangle([x, y, x + w - 1, y + h - 1], fill=FILL if style == "tint" else PAPER)
+    if style == "tint" and not optional:
+        _tint(draw, x, y, w, h)
+    else:
+        draw.rectangle([x, y, x + w - 1, y + h - 1], fill=PAPER)
     if optional:
         dashed_line(draw, box, (3, 2) if compact else (6, 4), 1, DARK)
         _dashed_vertical(draw, x, y, y + h, bar, on, off, INK)

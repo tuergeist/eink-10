@@ -516,3 +516,42 @@ def test_hint_for_events_that_still_do_not_fit_renders():
     tomorrow = (NEXT, [agenda.Entry(e.start.replace(day=11), e.end.replace(day=11), e.title, "")
                        for e in entries] + [agenda.Entry(None, None, "x", "")])
     assert agenda.render_png(1200, 825, DAY, [_timed(17, 30, 18, 30)], now=_at(16, 30), tomorrow=tomorrow)
+
+
+# --- the light fill behind events -----------------------------------------------------
+
+def _mean_gray(pattern):
+    from PIL import Image, ImageDraw
+    img = Image.new("L", (40, 40), agenda.PAPER)
+    agenda._tint(ImageDraw.Draw(img), 0, 0, 40, 40, pattern)
+    return sum(img.getdata()) / (40 * 40), set(img.getdata())
+
+
+def test_patterns_average_between_219_and_white():
+    from eink_renderer.grays import FILL, PAPER
+    solid, _ = _mean_gray("solid")
+    assert solid == FILL
+    for pattern, expected in (("checker", 237), ("stripes", 237), ("dots", 246)):
+        mean, levels = _mean_gray(pattern)
+        assert abs(mean - expected) <= 0.6, (pattern, mean)
+        assert levels == {FILL, PAPER}               # only panel levels, nothing to snap
+
+
+def test_default_fill_is_half_as_dark_as_the_219_fill():
+    from eink_renderer.grays import FILL, PAPER
+    assert agenda.TINT_PATTERN == "checker"
+    mean, _ = _mean_gray(agenda.TINT_PATTERN)
+    assert abs((PAPER - mean) - (PAPER - FILL) / 2) <= 0.6
+
+
+def test_every_pattern_renders_differently():
+    entries = [_timed(9, 0, 10, 0, "a"), agenda.Entry(None, None, "Ganztags", "")]
+    out = set()
+    for pattern in ("solid", "checker", "stripes", "dots"):
+        old = agenda.TINT_PATTERN
+        agenda.TINT_PATTERN = pattern
+        try:
+            out.add(agenda.render_png(1200, 825, DAY, entries))
+        finally:
+            agenda.TINT_PATTERN = old
+    assert len(out) == 4
