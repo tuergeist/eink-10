@@ -374,3 +374,84 @@ def test_optional_all_day_event_is_drawn_differently():
     solid = agenda.Entry(None, None, "Freiburg", "", optional=False)
     dashed = agenda.Entry(None, None, "Freiburg", "", optional=True)
     assert agenda.render_png(1200, 825, DAY, [solid]) != agenda.render_png(1200, 825, DAY, [dashed])
+
+
+# --- "[Sync]" copies of a meeting -------------------------------------------------
+
+def _meeting(title, h1=14, m1=30, h2=15, m2=0):
+    return _timed(h1, m1, h2, m2, title)
+
+
+def test_sync_copy_is_dropped_when_the_original_exists():
+    kept = agenda.drop_sync_twins([_meeting("30\xa0Min. mit Kunde (Max)"),
+                                   _meeting("[Sync] 30 Min. mit Kunde (Max)")])
+    assert [e.title for e in kept] == ["30\xa0Min. mit Kunde (Max)"]
+
+
+def test_sync_event_without_twin_or_at_another_time_stays():
+    sync = _meeting("[Sync] Test")
+    assert agenda.drop_sync_twins([sync]) == [sync]
+    other_time = [_meeting("Test", 9, 0, 10, 0), sync]
+    assert agenda.drop_sync_twins(other_time) == other_time
+    other_title = [_meeting("Etwas anderes"), sync]
+    assert agenda.drop_sync_twins(other_title) == other_title
+
+
+def test_twins_are_dropped_from_the_days_entries():
+    body = b"""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//t//EN
+BEGIN:VEVENT
+UID:1@t
+DTSTAMP:20261101T000000Z
+DTSTART;TZID=Europe/Berlin:20261110T143000
+DTEND;TZID=Europe/Berlin:20261110T150000
+SUMMARY:Meeting
+END:VEVENT
+BEGIN:VEVENT
+UID:2@t
+DTSTAMP:20261101T000000Z
+DTSTART;TZID=Europe/Berlin:20261110T143000
+DTEND;TZID=Europe/Berlin:20261110T150000
+SUMMARY:[Sync] Meeting
+END:VEVENT
+END:VCALENDAR
+"""
+    assert [e.title for e in agenda.todays_entries(body, DAY)] == ["Meeting"]
+
+
+def test_every_style_renders():
+    entries = [_timed(9, 0, 10, 35, "a"), _timed(10, 0, 10, 40, "b"),
+               _timed(12, 0, 13, 0, "c", optional=True),
+               agenda.Entry(None, None, "Ganztags", "", optional=False),
+               agenda.Entry(None, None, "Vielleicht", "", optional=True)]
+    images = set()
+    for style in ("bar", "bracket", "tint", "classic"):
+        old = agenda.BLOCK_STYLE
+        agenda.BLOCK_STYLE = style
+        try:
+            images.add(agenda.render_png(1200, 825, DAY, entries))
+        finally:
+            agenda.BLOCK_STYLE = old
+    assert len(images) == 4
+
+
+# --- nothing left today -------------------------------------------------------
+
+def test_nothing_left_today_gives_a_thin_band_and_more_room_for_tomorrow():
+    gone = _owners(agenda.layout_blocks([_timed(16, 0, 17, 0)], DAY))      # over before 18:00
+    p = agenda.plan_split(_at(18, 20), gone, _owners([]), 176, 777)
+    assert p.upper_empty is True
+    busy = agenda.plan_split(_at(18, 20), _owners(agenda.layout_blocks([_timed(17, 30, 18, 30)], DAY)),
+                             _owners([]), 176, 777)
+    assert busy.upper_empty is False
+    assert p.lower_top < busy.lower_top        # the band is thinner than three hours
+
+
+def test_band_text_is_drawn_when_nothing_is_left():
+    tomorrow = (NEXT, [agenda.Entry(None, None, "Morgen", "")])
+    with_event = agenda.render_png(1200, 825, DAY, [_timed(18, 0, 19, 0)], now=_at(18, 20),
+                                   tomorrow=tomorrow)
+    gone = agenda.render_png(1200, 825, DAY, [_timed(16, 0, 17, 0)], now=_at(18, 20),
+                             tomorrow=tomorrow)
+    assert with_event != gone

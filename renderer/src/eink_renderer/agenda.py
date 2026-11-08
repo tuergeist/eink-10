@@ -88,6 +88,8 @@ UPPER_MIN_MINUTES = 3 * 60   # the upper part covers at least three hours
 ROW_H = 30                   # pixels per 30 minutes, normal
 ROW_H_COMPACT = 15           # ... in the condensed preview of tomorrow
 SPLIT_GAP = 12
+EMPTY_BAND_H = 36            # thin band instead of today's hours when nothing is left
+EMPTY_TEXT = "Keine Termine heute mehr"
 HEADING_H = 34               # tomorrow's label and all-day strip
 MIN_LOWER_H = 150
 COLHEAD_H = 30           # "Christoph" / "Anne" above the columns
@@ -201,9 +203,27 @@ def todays_entries(ics: bytes, day: date) -> list[Entry]:
                              ends_after=e > day_end, optional=optional,
                              owner=owner_of(ev)))
 
+    entries = drop_sync_twins(entries)
     far = datetime.max.replace(tzinfo=TZ)
     entries.sort(key=lambda x: (x.start is not None, x.start or far, x.title))
     return entries
+
+
+_SYNC = re.compile(r"^\s*\[sync\]\s*", re.IGNORECASE)
+
+
+def _plain(title: str) -> str:
+    return " ".join(title.replace("\xa0", " ").split()).casefold()
+
+
+def drop_sync_twins(entries: list[Entry]) -> list[Entry]:
+    """A meeting that also exists as "[Sync] <same title>" at the same time is
+    shown once: the "[Sync]" copy goes. A "[Sync]" event without such a twin stays."""
+    originals = {(e.start, e.end, _plain(e.title)) for e in entries
+                 if not _SYNC.match(e.title)}
+    return [e for e in entries
+            if not (_SYNC.match(e.title)
+                    and (e.start, e.end, _plain(_SYNC.sub("", e.title))) in originals)]
 
 
 def time_label(e: Entry) -> str:
@@ -338,29 +358,85 @@ def _clip(blocks: list[Block], lo: int, hi: int) -> list[Block]:
     return out
 
 
+# How an event is marked. Black text on a mid-gray fill is hard to read on the
+# panel, especially small, so the fill is the lightest gray and a bar marks the front:
+#   "tint"     (default, chosen by the user) very light gray fill + bar;
+#              optional: white, dashed outline, no bar
+#   "bar"      white, solid bar at the left; optional: dashed bar and dashed outline
+#   "bracket"  white, a "[" at the left;     optional: dashed stem
+#   "classic"  the first version: mid-gray fill (normal), light gray + dashed outline (optional)
+BLOCK_STYLE = "tint"
+
+
+def _dashed_vertical(draw: ImageDraw.ImageDraw, x: int, y0: int, y1: int, width: int,
+                     on: int, off: int, fill: int) -> None:
+    yy = y0
+    while yy < y1:
+        draw.rectangle([x, yy, x + width - 1, min(yy + on, y1) - 1], fill=fill)
+        yy += on + off
+
+
+def _frame(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int,
+           optional: bool, compact: bool = False, style: str | None = None) -> int:
+    """Background and front marker of an event; returns how far the text is inset."""
+    style = style or BLOCK_STYLE
+    bar = 3 if compact else 6
+    on, off = (3, 2) if compact else (6, 4)
+    box = [(x, y), (x + w - 1, y), (x + w - 1, y + h - 1), (x, y + h - 1), (x, y)]
+
+    if style == "classic":
+        if optional:
+            draw.rectangle([x, y, x + w - 1, y + h - 1], fill=FILL)
+            dashed_line(draw, box, (4, 3) if compact else (6, 4), 1 if compact else 2, DARK)
+        else:
+            draw.rectangle([x, y, x + w - 1, y + h - 1], fill=GRID)
+            draw.rectangle([x, y, x + (1 if compact else 3), y + h - 1], fill=INK)
+        return 6 if compact else 10
+
+    if style == "bracket":
+        draw.rectangle([x, y, x + w - 1, y + h - 1], fill=PAPER)
+        stem, tick = (2, 6) if compact else (3, 12)
+        if optional:
+            _dashed_vertical(draw, x, y, y + h, stem, on, off, INK)
+        else:
+            draw.rectangle([x, y, x + stem - 1, y + h - 1], fill=INK)
+        draw.rectangle([x, y, x + tick - 1, y + stem - 1], fill=INK)
+        draw.rectangle([x, y + h - stem, x + tick - 1, y + h - 1], fill=INK)
+        return stem + (5 if compact else 10)
+
+    if style == "tint" and optional:
+        draw.rectangle([x, y, x + w - 1, y + h - 1], fill=PAPER)
+        dashed_line(draw, box, (4, 3) if compact else (6, 4), 1 if compact else 2, DARK)
+        return 6 if compact else 10
+
+    # "bar", and the normal event of "tint"
+    draw.rectangle([x, y, x + w - 1, y + h - 1], fill=FILL if style == "tint" else PAPER)
+    if optional:
+        dashed_line(draw, box, (3, 2) if compact else (6, 4), 1, DARK)
+        _dashed_vertical(draw, x, y, y + h, bar, on, off, INK)
+    else:
+        if style == "bar":
+            draw.line(box, fill=GRID, width=1)
+        draw.rectangle([x, y, x + bar - 1, y + h - 1], fill=INK)
+    return bar + (4 if compact else 6)
+
+
 def _draw_block(draw: ImageDraw.ImageDraw, b: Block, x: int, y: int,
                 w: int, h: int, compact: bool = False) -> None:
     e = b.entry
     ink = INK
-    if e.optional:
-        # Lighter background and a dashed outline.
-        draw.rectangle([x, y, x + w - 1, y + h - 1], fill=FILL)
-        pts = [(x, y), (x + w - 1, y), (x + w - 1, y + h - 1), (x, y + h - 1), (x, y)]
-        dashed_line(draw, pts, (4, 3) if compact else (6, 4), 1 if compact else 2, DARK)
-    else:
-        draw.rectangle([x, y, x + w - 1, y + h - 1], fill=GRID)
-        draw.rectangle([x, y, x + (1 if compact else 3), y + h - 1], fill=INK)
+    inset = _frame(draw, x, y, w, h, e.optional, compact)
 
     if compact:
         # Condensed: the title only; the time shows in the row it sits in.
         f = font(12, bold=True)
         title = printable(e.title, f) or "(ohne Titel)"
         # In the block's top row, so an overlapping block below cannot cover it.
-        draw.text((x + 6, y + max(0, (min(h, ROW_H_COMPACT) - 14) // 2)),
-                  _ellipsize(title, f, w - 10), font=f, fill=ink)
+        draw.text((x + inset, y + max(0, (min(h, ROW_H_COMPACT) - 14) // 2)),
+                  _ellipsize(title, f, w - inset - 4), font=f, fill=ink)
         return
 
-    inner_x, inner_w = x + 10, w - 14
+    inner_x, inner_w = x + inset, w - inset - 4
     if h >= 40:
         tf, sf = font(18, bold=True), font(15)
         title = printable(e.title, tf) or "(ohne Titel)"
@@ -384,20 +460,14 @@ def _draw_allday(draw: ImageDraw.ImageDraw, entries: list[Entry], y: int,
     x = x_start
     for i, e in enumerate(entries):
         title = printable(e.title, f) or "(ohne Titel)"
-        w = text_size(title, f)[0] + 28
+        inset = 12 if BLOCK_STYLE != "classic" else 14
+        w = text_size(title, f)[0] + inset + 14
         more = len(entries) - i - 1
         if x + w > x_end - (60 if more else 0):
             draw.text((x, y + 4), f"+ {len(entries) - i}", font=f, fill=DARK)
             return
-        if e.optional:
-            draw.rectangle([x, y, x + w - 1, y + ALLDAY_H - 1], fill=FILL)
-            pts = [(x, y), (x + w - 1, y), (x + w - 1, y + ALLDAY_H - 1),
-                   (x, y + ALLDAY_H - 1), (x, y)]
-            dashed_line(draw, pts, (6, 4), 2, DARK)
-        else:
-            draw.rectangle([x, y, x + w - 1, y + ALLDAY_H - 1], fill=GRID)
-            draw.rectangle([x, y, x + 3, y + ALLDAY_H - 1], fill=INK)
-        draw.text((x + 14, y + 3), title, font=f, fill=INK)
+        inset = _frame(draw, x, y, w, ALLDAY_H, e.optional)
+        draw.text((x + inset + 2, y + 3), title, font=f, fill=INK)
         x += w + 10
 
 
@@ -585,6 +655,7 @@ class SplitPlan:
     lower: tuple[int, int]     # tomorrow's range in minutes
     lower_top: int             # y of tomorrow's grid
     heading_y: int
+    upper_empty: bool = False  # nothing left today: a thin band replaces the hours
 
 
 def plan_split(now: datetime, today: dict[str, list[Block]],
@@ -603,7 +674,9 @@ def plan_split(now: datetime, today: dict[str, list[Block]],
     latest = max((b.end for bl in today.values() for b in bl if b.end > start),
                  default=0)
     end = min(24 * 60, max(start + UPPER_MIN_MINUTES, -(-latest // 60) * 60))
-    upper_h = (end - start) // SLOT * ROW_H
+    # Nothing left: no event ends after the hour the upper part would start at.
+    empty = latest == 0
+    upper_h = EMPTY_BAND_H if empty else (end - start) // SLOT * ROW_H
 
     heading_y = grid_top + upper_h + SPLIT_GAP
     lower_top = heading_y + HEADING_H + 4
@@ -616,7 +689,7 @@ def plan_split(now: datetime, today: dict[str, list[Block]],
     want = max([DEFAULT_END] + [-(-b.end // 60) * 60 for b in blocks])
     fit = lower_h // (2 * ROW_H_COMPACT)          # hours that fit
     hi = min(want, lo + fit * 60, 24 * 60)
-    return SplitPlan((start, end), (lo, hi), lower_top, heading_y)
+    return SplitPlan((start, end), (lo, hi), lower_top, heading_y, empty)
 
 
 def render_png(width: int, height: int, day: date, entries: list[Entry],
@@ -690,8 +763,16 @@ def render_png(width: int, height: int, day: date, entries: list[Entry],
         return _encode(img)
 
     # Split view: today's rest above, tomorrow condensed below.
-    _draw_day(draw, x0=x0, x1=x1, col_x=col_x, grid_top=grid_top,
-              lo=plan.upper[0], hi=plan.upper[1], row_h=ROW_H, per_owner=per_owner)
+    if plan.upper_empty:
+        # Across both columns, thin: no hours to show.
+        draw.line([(x0, grid_top), (x1, grid_top)], fill=GRID, width=1)
+        draw.line([(x0, grid_top + EMPTY_BAND_H), (x1, grid_top + EMPTY_BAND_H)],
+                  fill=GRID, width=1)
+        draw.text(((x0 + x1) // 2, grid_top + EMPTY_BAND_H // 2), EMPTY_TEXT,
+                  font=font(18), fill=DARK, anchor="mm")
+    else:
+        _draw_day(draw, x0=x0, x1=x1, col_x=col_x, grid_top=grid_top,
+                  lo=plan.upper[0], hi=plan.upper[1], row_h=ROW_H, per_owner=per_owner)
 
     sep_y = plan.heading_y - 4
     draw.line([(MARGIN, sep_y), (x1, sep_y)], fill=INK, width=2)
