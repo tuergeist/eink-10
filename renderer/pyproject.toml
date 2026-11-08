@@ -9,10 +9,13 @@ requires-python = ">=3.11"
 dependencies = [
     "pillow>=11.0",
     "requests>=2.32",
+    "icalendar>=6.0",
+    "recurring-ical-events>=3.3",
 ]
 
 [project.scripts]
 eink-render = "eink_renderer.main:main"
+eink-agenda = "eink_renderer.agenda:main"
 
 [build-system]
 requires = ["pdm-backend"]

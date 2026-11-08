@@ -5,7 +5,7 @@
 groups = ["default", "dev"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:c907c877e869f04e2ec5e2784c545334a3439d477d2022efd8221a9a1cc23057"
+content_hash = "sha256:97d7fcf5f346aac50aa1e44b639c41f5fb1225a6f0337ee29c5f3aafdd07837d"
 
 [[metadata.targets]]
 requires_python = ">=3.11"
@@ -171,6 +171,18 @@ files = [
 ]
 
 [[package]]
+name = "click"
+version = "8.5.1"
+requires_python = ">=3.10"
+summary = "Composable command line interface toolkit"
+groups = ["default"]
+marker = "python_version >= \"3.9\""
+files = [
+    {file = "click-8.5.1-py3-none-any.whl", hash = "sha256:8bb5376d2006950386f8c6427613334a2acadc5f559cb80e638d00b4df957e37"},
+    {file = "click-8.5.1.tar.gz", hash = "sha256:9bbfada76703fd1d784b83eea012e3e8c6a001a876543ef104fa56aaaeb072b4"},
+]
+
+[[package]]
 name = "colorama"
 version = "0.4.6"
 requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,>=2.7"
@@ -180,6 +192,22 @@ marker = "sys_platform == \"win32\""
 files = [
     {file = "colorama-0.4.6-py2.py3-none-any.whl", hash = "sha256:4f1d9991f5acc0ca119f9d443620b77f9d6b33703e51011c16baf57afb285fc6"},
     {file = "colorama-0.4.6.tar.gz", hash = "sha256:08695f5cb7ed6e0531a20572697297273c47b8cae5a63ffc6d6ed5c201be6e44"},
+]
+
+[[package]]
+name = "icalendar"
+version = "7.3.0"
+requires_python = ">=3.10"
+summary = "RFC 5545 compatible parser and generator of iCalendar files"
+groups = ["default"]
+dependencies = [
+    "python-dateutil",
+    "typing-extensions~=4.10; python_version < \"3.13\"",
+    "tzdata>=2025.3",
+]
+files = [
+    {file = "icalendar-7.3.0-py3-none-any.whl", hash = "sha256:8355acfe17be81b368f0b1e3740817cea9b56ea889931f8f1a87c62f2d28db0b"},
+    {file = "icalendar-7.3.0.tar.gz", hash = "sha256:7bd001c8e648205e1bde5c6a5b77096598e8d0893dcf57755c6c597635620132"},
 ]
 
 [[package]]
@@ -345,6 +373,40 @@ files = [
 ]
 
 [[package]]
+name = "python-dateutil"
+version = "2.9.0.post0"
+requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,>=2.7"
+summary = "Extensions to the standard Python datetime module"
+groups = ["default"]
+dependencies = [
+    "six>=1.5",
+]
+files = [
+    {file = "python-dateutil-2.9.0.post0.tar.gz", hash = "sha256:37dd54208da7e1cd875388217d5e00ebd4179249f90fb72437e91a35459a0ad3"},
+    {file = "python_dateutil-2.9.0.post0-py2.py3-none-any.whl", hash = "sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427"},
+]
+
+[[package]]
+name = "recurring-ical-events"
+version = "3.8.2"
+requires_python = ">=3.8"
+summary = "Calculate recurrence times of events, todos, alarms and journals based on icalendar RFC5545."
+groups = ["default"]
+dependencies = [
+    "backports-zoneinfo; python_version == \"3.7\" or python_version == \"3.8\"",
+    "icalendar<8.0.0,>=6.1.0",
+    "python-dateutil<3.0.0,>=2.8.1",
+    "typing-extensions; python_version <= \"3.9\"",
+    "tzdata",
+    "x-wr-timezone<3.0.0,>=1.0.0; python_version >= \"3.9\"",
+    "x-wr-timezone==0.*; python_version <= \"3.8\"",
+]
+files = [
+    {file = "recurring_ical_events-3.8.2-py3-none-any.whl", hash = "sha256:9ad605e27b4fbeb70ee1c66205ade32550be15a57cedc579606522f1c67aef6d"},
+    {file = "recurring_ical_events-3.8.2.tar.gz", hash = "sha256:e731af31d0b7dec5cd47a1defacd8549e2f36fab1c1995e8b9f042822a0acf8e"},
+]
+
+[[package]]
 name = "requests"
 version = "2.34.2"
 requires_python = ">=3.10"
@@ -362,6 +424,40 @@ files = [
 ]
 
 [[package]]
+name = "six"
+version = "1.17.0"
+requires_python = "!=3.0.*,!=3.1.*,!=3.2.*,>=2.7"
+summary = "Python 2 and 3 compatibility utilities"
+groups = ["default"]
+files = [
+    {file = "six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"},
+    {file = "six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81"},
+]
+
+[[package]]
+name = "typing-extensions"
+version = "4.16.0"
+requires_python = ">=3.9"
+summary = "Backported and Experimental Type Hints for Python 3.9+"
+groups = ["default"]
+marker = "python_version < \"3.13\""
+files = [
+    {file = "typing_extensions-4.16.0-py3-none-any.whl", hash = "sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8"},
+    {file = "typing_extensions-4.16.0.tar.gz", hash = "sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5"},
+]
+
+[[package]]
+name = "tzdata"
+version = "2026.6"
+requires_python = ">=2"
+summary = "Provider of IANA time zone data"
+groups = ["default"]
+files = [
+    {file = "tzdata-2026.6-py2.py3-none-any.whl", hash = "sha256:0a10eec6e13ef16b627fabed9a5f2ba61a62b1c67f327305f4e7e412a70b4aec"},
+    {file = "tzdata-2026.6.tar.gz", hash = "sha256:85d2cd9c09f81f0bb29db27759fc83af4f1e620efb814f8c5bf8b4cc4feece6d"},
+]
+
+[[package]]
 name = "urllib3"
 version = "2.7.0"
 requires_python = ">=3.10"
@@ -370,4 +466,20 @@ groups = ["default"]
 files = [
     {file = "urllib3-2.7.0-py3-none-any.whl", hash = "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897"},
     {file = "urllib3-2.7.0.tar.gz", hash = "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c"},
+]
+
+[[package]]
+name = "x-wr-timezone"
+version = "2.0.1"
+summary = "Repair Google Calendar - This Python module and program makes ICS/iCalendar files using X-WR-TIMEZONE compatible with the RFC 5545 standard."
+groups = ["default"]
+marker = "python_version >= \"3.9\""
+dependencies = [
+    "click",
+    "icalendar>=6.1.0",
+    "tzdata",
+]
+files = [
+    {file = "x_wr_timezone-2.0.1-py3-none-any.whl", hash = "sha256:e74a53b9f4f7def8138455c240e65e47c224778bce3c024fcd6da2cbe91ca038"},
+    {file = "x_wr_timezone-2.0.1.tar.gz", hash = "sha256:9166c40e6ffd4c0edebabc354e1a1e2cffc1bb473f88007694793757685cc8c3"},
 ]
